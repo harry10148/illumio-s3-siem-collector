@@ -1,7 +1,19 @@
 <#
 .SYNOPSIS
-    Install the Illumio S3 -> SIEM Collector from an offline bundle on Windows.
-    Must be run as Administrator from inside the extracted bundle directory.
+    Install the Illumio S3 -> SIEM Collector on Windows.
+
+.DESCRIPTION
+    Supports two modes:
+
+    Bundle mode   — run from inside an extracted offline bundle
+                    (python-runtime.tar.gz present alongside this script)
+                    Administrator PowerShell inside bundle dir:
+                        .\install.ps1
+
+    Git-clone mode — run from the repository's scripts\ directory
+                    (requires Python 3.x in PATH; internet access for pip)
+                    Administrator PowerShell at repo root:
+                        .\scripts\install.ps1
 #>
 param(
     [string]$InstallDir = "C:\illumio-collector"
@@ -15,90 +27,140 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administra
     exit 1
 }
 
-$BundleDir = $PSScriptRoot
+$ScriptDir = $PSScriptRoot
 
-Write-Host "==> Copying bundle to $InstallDir"
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item -Recurse -Force -Path (Join-Path $BundleDir "app"), `
-                                 (Join-Path $BundleDir "wheels") `
-                          -Destination $InstallDir
-Copy-Item -Force (Join-Path $BundleDir "VERSION") $InstallDir
-
-$PythonExe = Join-Path $InstallDir "python\python.exe"
-if (-not (Test-Path $PythonExe)) {
-    Write-Host "==> Extracting portable Python runtime"
-    tar -xzf (Join-Path $BundleDir "python-runtime.tar.gz") -C $InstallDir
+# ---------- detect mode ----------
+if (Test-Path (Join-Path $ScriptDir "python-runtime.tar.gz")) {
+    $Mode = "bundle"
+    $BundleDir = $ScriptDir
+} else {
+    $Mode = "gitclone"
+    $RepoRoot = Split-Path -Parent $ScriptDir
 }
 
-Write-Host "==> Installing wheels (offline)"
-& $PythonExe -m pip install `
-    --no-index `
-    --find-links (Join-Path $InstallDir "wheels") `
-    -r (Join-Path $InstallDir "app\requirements.txt")
+Write-Host "==> Mode: $Mode"
 
-Write-Host "==> Preparing config"
+# ---------- copy application code ----------
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "app") | Out-Null
+
+if ($Mode -eq "bundle") {
+    Copy-Item -Recurse -Force -Path (Join-Path $BundleDir "app\*") `
+              -Destination (Join-Path $InstallDir "app")
+    Copy-Item -Recurse -Force -Path (Join-Path $BundleDir "wheels") `
+              -Destination $InstallDir
+    if (Test-Path (Join-Path $BundleDir "VERSION")) {
+        Copy-Item -Force (Join-Path $BundleDir "VERSION") $InstallDir
+    }
+} else {
+    $AppDst = Join-Path $InstallDir "app"
+    foreach ($item in "collector.py","requirements.txt","config.example.yaml") {
+        Copy-Item -Force (Join-Path $RepoRoot $item) $AppDst
+    }
+    foreach ($sub in "core","sources","mappers","sinks","mappings") {
+        Copy-Item -Recurse -Force (Join-Path $RepoRoot $sub) $AppDst
+    }
+}
+
+# ---------- Python runtime + dependencies ----------
+if ($Mode -eq "bundle") {
+    $PythonExe = Join-Path $InstallDir "python\python.exe"
+    if (-not (Test-Path $PythonExe)) {
+        Write-Host "==> Extracting portable Python runtime"
+        tar -xzf (Join-Path $BundleDir "python-runtime.tar.gz") -C $InstallDir
+    }
+    Write-Host "==> Installing wheels (offline)"
+    & $PythonExe -m pip install `
+        --no-index `
+        --find-links (Join-Path $InstallDir "wheels") `
+        -r (Join-Path $InstallDir "app\requirements.txt")
+} else {
+    $SysPython = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+    if (-not $SysPython) {
+        Write-Error "python not found in PATH — install Python 3.x first."
+        exit 1
+    }
+    $VenvDir = Join-Path $InstallDir "venv"
+    if (-not (Test-Path $VenvDir)) {
+        Write-Host "==> Creating Python venv"
+        & python -m venv $VenvDir
+    }
+    $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
+    Write-Host "==> Installing dependencies"
+    & $PythonExe -m pip install --upgrade pip -q
+    & $PythonExe -m pip install -r (Join-Path $InstallDir "app\requirements.txt") -q
+}
+
+# ---------- config ----------
 $ConfigPath = Join-Path $InstallDir "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
     Copy-Item (Join-Path $InstallDir "app\config.example.yaml") $ConfigPath
 }
-
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $InstallDir "state"), `
     (Join-Path $InstallDir "logs") | Out-Null
 
+# ---------- Windows service ----------
 $ServiceName = "IllumioCollector"
+
+# Remove existing service if present (update scenario)
+$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Host "==> Removing existing service (update)"
+    if ($existing.Status -eq "Running") {
+        Stop-Service -Name $ServiceName -Force
+    }
+    sc.exe delete $ServiceName | Out-Null
+    Start-Sleep -Seconds 1
+}
+
 $NssmZip = Join-Path $BundleDir "nssm-2.24.zip"
 $NssmDir  = Join-Path $InstallDir "nssm"
 
-if (Test-Path $NssmZip) {
+if (($Mode -eq "bundle") -and (Test-Path $NssmZip)) {
     Write-Host "==> Extracting NSSM"
     if (-not (Test-Path $NssmDir)) {
         Expand-Archive -Path $NssmZip -DestinationPath $NssmDir
     }
     $Nssm = Join-Path $NssmDir "nssm-2.24\win64\nssm.exe"
 
-    Write-Host "==> Registering Windows service (via NSSM)"
+    Write-Host "==> Registering Windows service (NSSM)"
     & $Nssm install $ServiceName $PythonExe `
         "$InstallDir\app\collector.py --config $InstallDir\config.yaml"
-    & $Nssm set $ServiceName AppDirectory      "$InstallDir\app"
-    & $Nssm set $ServiceName DisplayName       "Illumio S3 to SIEM Collector"
-    & $Nssm set $ServiceName Description       "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
-    & $Nssm set $ServiceName AppStdout         "$InstallDir\logs\nssm-stdout.log"
-    & $Nssm set $ServiceName AppStderr         "$InstallDir\logs\nssm-stderr.log"
-    & $Nssm set $ServiceName AppRotateFiles    1
-    & $Nssm set $ServiceName AppRotateBytes    52428800
-    & $Nssm set $ServiceName Start             SERVICE_AUTO_START
+    & $Nssm set $ServiceName AppDirectory   "$InstallDir\app"
+    & $Nssm set $ServiceName DisplayName    "Illumio S3 to SIEM Collector"
+    & $Nssm set $ServiceName Description    "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
+    & $Nssm set $ServiceName AppStdout      "$InstallDir\logs\nssm-stdout.log"
+    & $Nssm set $ServiceName AppStderr      "$InstallDir\logs\nssm-stderr.log"
+    & $Nssm set $ServiceName AppRotateFiles 1
+    & $Nssm set $ServiceName AppRotateBytes 52428800
+    & $Nssm set $ServiceName Start          SERVICE_AUTO_START
 
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "Install complete."
-    Write-Host " 1. Edit the config:   notepad $ConfigPath"
-    Write-Host " 2. Start the service: & `"$Nssm`" start $ServiceName"
-    Write-Host " 3. Watch the logs:    Get-Content $InstallDir\logs\collector.log -Wait"
+    Write-Host " 1. Edit config:     notepad $ConfigPath"
+    Write-Host " 2. Start service:   & `"$Nssm`" start $ServiceName"
+    Write-Host " 3. Watch logs:      Get-Content $InstallDir\logs\nssm-stdout.log -Wait"
     Write-Host "============================================================"
 } else {
-    Write-Host "==> Registering Windows service (via New-Service — NSSM not in bundle)"
+    Write-Host "==> Registering Windows service (New-Service)"
     $BinPath = "`"$PythonExe`" `"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
-    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        sc.exe delete $ServiceName | Out-Null
-        Start-Sleep -Seconds 1
-    }
-    New-Service -Name        $ServiceName `
+    New-Service -Name          $ServiceName `
                 -BinaryPathName $BinPath `
-                -DisplayName "Illumio S3 to SIEM Collector" `
-                -Description "Pull Illumio PCE logs from S3 and forward to FortiSIEM" `
-                -StartupType Automatic | Out-Null
+                -DisplayName   "Illumio S3 to SIEM Collector" `
+                -Description   "Pull Illumio PCE logs from S3 and forward to FortiSIEM" `
+                -StartupType   Automatic | Out-Null
 
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "Install complete."
-    Write-Host " 1. Edit the config:   notepad $ConfigPath"
-    Write-Host " 2. Start the service: Start-Service $ServiceName"
-    Write-Host " 3. Watch the logs:    Get-Content $InstallDir\logs\collector.log -Wait"
-    Write-Host ""
-    Write-Host " NOTE: Service registered without NSSM. stdout/stderr will not"
-    Write-Host "       be captured automatically. For production use, download"
-    Write-Host "       nssm-2.24.zip from https://nssm.cc and re-run install.ps1"
+    Write-Host " 1. Edit config:     notepad $ConfigPath"
+    Write-Host " 2. Start service:   Start-Service $ServiceName"
+    Write-Host " 3. Watch logs:      Get-Content $InstallDir\logs\collector.log -Wait"
+    if ($Mode -eq "bundle") {
+        Write-Host ""
+        Write-Host " NOTE: NSSM not in bundle — stdout/stderr not captured."
+        Write-Host "       Download nssm-2.24.zip from https://nssm.cc and re-run."
+    }
     Write-Host "============================================================"
 }

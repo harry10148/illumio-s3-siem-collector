@@ -7,13 +7,27 @@
 3. [離線更新](#離線更新)
 4. [設定變更](#設定變更)
 5. [重播歷史資料](#重播歷史資料)
-6. [排錯](#排錯)
+6. [解除安裝](#解除安裝)
+7. [排錯](#排錯)
 
 ---
 
 ## 首次安裝
 
-### 準備 bundle（有網路的 build host 上執行）
+兩種安裝方式，結果相同（都會安裝成 systemd / Windows 服務）：
+
+| 方式 | 適用場景 | 需要網路 |
+|---|---|---|
+| **離線 bundle** | 客戶端無法連網、生產環境 | 只有 build host 需要 |
+| **git clone** | 開發 / 測試環境，或目標主機可聯網 | 目標主機需要 pip |
+
+---
+
+### 方式一：離線 bundle（推薦生產環境）
+
+#### Linux
+
+**Step 1 — 在有網路的 build host 準備 bundle**
 
 ```bash
 git clone <repo_url>
@@ -22,9 +36,9 @@ bash scripts/build_offline_bundle.sh
 # → dist/illumio-collector-linux-x86_64-v1.0.tar.gz
 ```
 
-把 `.tar.gz` 複製到目標主機（USB、SCP、跳板機等）。
+**Step 2 — 把 `.tar.gz` 複製到目標主機**（USB、SCP、跳板機等）
 
-### 安裝到目標主機（離線環境）
+**Step 3 — 在目標主機安裝**
 
 ```bash
 tar xzf illumio-collector-linux-x86_64-v1.0.tar.gz
@@ -32,7 +46,57 @@ cd bundle
 sudo ./install.sh
 ```
 
-install.sh 完成後：
+#### Windows
+
+**Step 1 — 在有網路的 build host 準備 bundle**
+
+```powershell
+git clone <repo_url>
+cd illumio_s3_collector
+.\scripts\build_offline_bundle.ps1
+# → dist\illumio-collector-windows-x86_64-v1.0.zip
+```
+
+**Step 2 — 把 `.zip` 複製到目標主機**
+
+**Step 3 — 以 Administrator PowerShell 安裝**
+
+```powershell
+Expand-Archive illumio-collector-windows-x86_64-v1.0.zip C:\illumio-bundle
+cd C:\illumio-bundle
+.\install.ps1
+```
+
+---
+
+### 方式二：git clone（有網路的目標主機）
+
+#### Linux
+
+```bash
+git clone <repo_url>
+cd illumio_s3_collector
+sudo bash scripts/install.sh
+```
+
+腳本會自動建立 Python venv 並用 pip 安裝依賴。
+
+#### Windows
+
+```powershell
+git clone <repo_url>
+cd illumio_s3_collector
+# Administrator PowerShell
+.\scripts\install.ps1
+```
+
+腳本會自動建立 Python venv 並用 pip 安裝依賴（需要 Python 3.x 已安裝且在 PATH 中）。
+
+---
+
+### 安裝後（兩種方式相同）
+
+#### Linux
 
 ```bash
 # 填入 AWS 認證 + FortiSIEM IP/port
@@ -46,6 +110,21 @@ sudo /opt/illumio-collector/python/bin/python3 \
 # 啟動服務
 sudo systemctl start illumio-collector
 sudo systemctl status illumio-collector
+```
+
+#### Windows
+
+```powershell
+notepad C:\illumio-collector\config.yaml
+
+# 驗證設定
+C:\illumio-collector\python\python.exe `
+  C:\illumio-collector\app\collector.py `
+  --config C:\illumio-collector\config.yaml --dry-run
+
+# 啟動服務
+Start-Service IllumioCollector
+Get-Service IllumioCollector
 ```
 
 ### 安裝後的目錄結構
@@ -209,6 +288,48 @@ sudo systemctl start illumio-collector
 ```
 
 > ⚠️ FortiSIEM 會收到重複事件，請確認 SIEM 端的 dedup 規則已啟用。
+
+---
+
+## 解除安裝
+
+解除安裝腳本預設**保留** config 和 checkpoint（state），方便之後重新安裝時不用重頭設定。
+加上 `--purge` / `-Purge` 才會一併刪除。
+
+### Linux
+
+```bash
+# 保留 config + state（預設）
+sudo bash scripts/uninstall.sh
+
+# 完全移除（含 config 和 checkpoint）
+sudo bash scripts/uninstall.sh --purge
+```
+
+保留的路徑：
+
+| 路徑 | 內容 |
+|---|---|
+| `/etc/illumio-collector/config.yaml` | 設定檔（含 AWS 認證） |
+| `/var/lib/illumio-collector/state/` | Checkpoint 檔 |
+| `/var/log/illumio-collector/` | Log 檔 |
+
+### Windows
+
+```powershell
+# 保留 config + state（預設）
+.\scripts\uninstall.ps1
+
+# 完全移除
+.\scripts\uninstall.ps1 -Purge
+```
+
+保留的路徑：
+
+| 路徑 | 內容 |
+|---|---|
+| `C:\illumio-collector\config.yaml` | 設定檔 |
+| `C:\illumio-collector\state\` | Checkpoint 檔 |
 
 ---
 
