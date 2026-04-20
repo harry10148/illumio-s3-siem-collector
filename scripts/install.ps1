@@ -102,7 +102,8 @@ if ($Mode -eq "bundle") {
         --find-links (Join-Path $InstallDir "wheels") `
         -r (Join-Path $InstallDir "app\requirements.txt")
 } else {
-    $SysPython = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+    $cmd = Get-Command python -ErrorAction SilentlyContinue
+    $SysPython = if ($cmd) { $cmd.Source } else { $null }
     if (-not $SysPython) {
         Write-Error "python not found in PATH — install Python 3.x first."
         exit 1
