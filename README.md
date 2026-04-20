@@ -193,7 +193,7 @@ Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 | `/opt/illumio-collector/uninstall.sh` | ✅ | ✅ | 解除安裝腳本 |
 | `/opt/illumio-collector/INSTALL_META` | ✅ | ✅ | 安裝時間、模式、服務帳號紀錄 |
 | `/opt/illumio-collector/VERSION` | ✅ | — | bundle 版本資訊 |
-| `/etc/illumio-collector/config.yaml` | ✅ | ✅ | **主設定檔（需填入認證）** 權限 600 |
+| `/etc/illumio-collector/config.yaml` | ✅ | ✅ | **主設定檔（需填入認證）** 權限 640，owner root，group illumio-collector |
 | `/var/lib/illumio-collector/state/` | ✅ | ✅ | Checkpoint 檔（每個 pipeline 一個 JSON） |
 | `/var/log/illumio-collector/` | ✅ | ✅ | Log 檔（含 rotate） |
 | `/etc/systemd/system/illumio-collector.service` | ✅ | ✅ | systemd unit 檔 |
@@ -206,6 +206,18 @@ Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 服務帳號：illumio-collector（系統帳號，no shell, no home）
           或 --user 指定的現有帳號
 ```
+
+`illumio-collector` 是最小權限的系統帳號：
+
+| 項目 | 值 | 說明 |
+|---|---|---|
+| UID 範圍 | < 1000（系統帳號） | 無法互動登入 |
+| Shell | `/sbin/nologin` | SSH / su 全部拒絕 |
+| Home 目錄 | 無 | `--no-create-home` |
+| 可寫路徑 | `/var/lib/illumio-collector/`、`/var/log/illumio-collector/` | 只有 state 和 log |
+| 可讀路徑 | `/etc/illumio-collector/config.yaml`（group 640）、`/opt/illumio-collector/app/`（唯讀） | |
+| 安裝 | `install.sh` 自動建立（若已存在則跳過） | |
+| 移除 | `uninstall.sh` 自動移除（只移除專屬帳號，不動 `--user` 指定的現有帳號） | |
 
 ```bash
 # 確認服務狀態

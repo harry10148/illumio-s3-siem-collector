@@ -111,7 +111,7 @@ if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
     -e "s|dir: \./state\b|dir: ${STATE_DIR}|g" \
     -e "s|dir: state\b|dir: ${STATE_DIR}|g" \
     "${INSTALL_DIR}/app/config.example.yaml" > "${CONFIG_DIR}/config.yaml"
-  chmod 600 "${CONFIG_DIR}/config.yaml"
+  chmod 640 "${CONFIG_DIR}/config.yaml"   # root can write, service user can read
 fi
 
 # ---------- service user and state dirs ----------
@@ -129,9 +129,11 @@ fi
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 chown -R "${SERVICE_USER}:" "${STATE_DIR}" "${LOG_DIR}" "${INSTALL_DIR}"
-chmod 700 "${CONFIG_DIR}"
-chown -R root:root "${CONFIG_DIR}"
-chmod 600 "${CONFIG_DIR}/config.yaml"
+# Config dir: root owns (only root can edit), service user group-reads
+chmod 750 "${CONFIG_DIR}"
+chown root:"${SERVICE_USER}" "${CONFIG_DIR}"
+chmod 640 "${CONFIG_DIR}/config.yaml"
+chown root:"${SERVICE_USER}" "${CONFIG_DIR}/config.yaml"
 
 # ---------- systemd unit ----------
 echo "==> Install systemd unit"
