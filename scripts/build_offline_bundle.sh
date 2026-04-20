@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # Build offline install bundle for Linux x86_64.
-# Run on a host with internet access + any Python 3.x + pip.
-# The bundle always ships Python 3.11 (from python-build-standalone);
-# the host Python version does not matter.
+#
+# Usage (on a host WITH internet access):
+#   git clone <repo>  &&  cd illumio_s3_collector
+#   bash scripts/build_offline_bundle.sh
+#   -> dist/illumio-collector-linux-x86_64-v1.0.tar.gz
+#
+# The bundle is self-contained: it includes Python 3.11 runtime + all wheels.
+# The target (offline) host needs only x86_64 CPU + glibc >= 2.17.
+# No Python, pip, or internet access required on the target.
+#
+# To update: git pull && bash scripts/build_offline_bundle.sh
 set -euo pipefail
 
 VERSION="${VERSION:-1.0}"

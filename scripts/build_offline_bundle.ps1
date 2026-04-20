@@ -1,6 +1,19 @@
 <#
 .SYNOPSIS
     Build offline install bundle for Windows x86_64.
+
+.DESCRIPTION
+    Run on a host WITH internet access:
+        git clone <repo>
+        cd illumio_s3_collector
+        .\scripts\build_offline_bundle.ps1
+        -> dist\illumio-collector-windows-x86_64-v1.0.zip
+
+    The bundle includes Python 3.11 runtime + all wheels + NSSM.
+    The target (offline) host needs only Windows 10 / Server 2016+.
+    No Python, pip, or internet required on the target.
+
+    To update: git pull; .\scripts\build_offline_bundle.ps1
 #>
 param(
     [string]$Version = "1.0",

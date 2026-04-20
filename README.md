@@ -195,9 +195,48 @@ filter:
 
 ---
 
-## Offline install
+## 建立 Offline Bundle（給 build host）
 
-### Linux
+> **前提：** build host 需要能連網際網路 + 已安裝 git + Python 3.x + pip。
+> 客戶端（離線環境）**完全不需要** Python、pip 或網路。
+
+### Linux bundle
+
+```bash
+# 1. Clone 專案（只需一次）
+git clone <repo_url>
+cd illumio_s3_collector
+
+# 2. 建 bundle（會自動下載 Python 3.11 runtime + 所有 wheels）
+bash scripts/build_offline_bundle.sh
+
+# 3. 把 bundle 傳到離線環境
+#    -> dist/illumio-collector-linux-x86_64-v1.0.tar.gz  (~47 MB)
+```
+
+未來要更新時：
+```bash
+git pull                        # 拉最新程式碼
+bash scripts/build_offline_bundle.sh   # 重新建 bundle
+```
+
+### Windows bundle
+
+```powershell
+# 1. Clone 專案
+git clone <repo_url>
+cd illumio_s3_collector
+
+# 2. 建 bundle（需要 PowerShell + internet）
+.\scripts\build_offline_bundle.ps1
+
+# 3. 傳到離線環境
+#    -> dist\illumio-collector-windows-x86_64-v1.0.zip
+```
+
+---
+
+## Offline install
 
 ```bash
 ./scripts/build_offline_bundle.sh
