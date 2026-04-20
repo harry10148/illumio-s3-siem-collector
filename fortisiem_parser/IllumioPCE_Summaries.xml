@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  FortiSIEM Custom Parser for Illumio PCE Traffic Summaries (syslog_json format)
+-->
+<patternDefinitions>
+    <deviceType>
+        <vendor>Illumio</vendor>
+        <model>PCE</model>
+        <version>ANY</version>
+    </deviceType>
+
+    <eventFormatRecognizer><![CDATA[illumio-pce summary]]></eventFormatRecognizer>
+
+    <parsingInstructions><![CDATA[
+        when:$_rawmsg regexp ".*illumio-pce summary (?<msgid>pd[0-3]) - (?<jsonBody>\\{.*\\})"
+        collectAndSetAttr($jsonBody);
+
+        setEventAttribute($_eventType, "Illumio-PCE-Flow");
+
+        when:$_jsonBody contains "\"pd\":0"
+        setEventAttribute($eventSeverity, 1);
+        setEventAttribute($policyDecision, "Allowed");
+
+        when:$_jsonBody contains "\"pd\":1"
+        setEventAttribute($eventSeverity, 2);
+        setEventAttribute($policyDecision, "PotentiallyBlocked");
+
+        when:$_jsonBody contains "\"pd\":2"
+        setEventAttribute($eventSeverity, 4);
+        setEventAttribute($policyDecision, "Blocked");
+
+        when:$_jsonBody contains "\"pd\":3"
+        setEventAttribute($eventSeverity, 1);
+        setEventAttribute($policyDecision, "Unknown");
+
+        extract:"src_ip":"(?<srcIpAddr>[0-9.]+)";
+        extract:"dst_ip":"(?<destIpAddr>[0-9.]+)";
+        extract:"dst_port":(?<destIpPort>\\d+);
+        extract:"proto":(?<ipProto>\\d+);
+
+        when:$_jsonBody contains "src_hostname"
+        extract:"src_hostname":"(?<srcName>[^\"]+)";
+
+        when:$_jsonBody contains "dst_hostname"
+        extract:"dst_hostname":"(?<destName>[^\"]+)";
+
+        when:$_jsonBody contains "\"un\":"
+        extract:"un":"(?<user>[^\"]+)";
+
+        when:$_jsonBody contains "\"pn\":"
+        extract:"pn":"(?<procName>[^\"]+)";
+
+        when:$_jsonBody contains "pce_fqdn"
+        extract:"pce_fqdn":"(?<pceFqdn>[^\"]+)";
+        setEventAttribute($hostName, $pceFqdn);
+    ]]></parsingInstructions>
+</patternDefinitions>

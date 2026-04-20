@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  FortiSIEM Custom Parser for Illumio PCE Auditable events (syslog_json format)
+  Import via: Admin > Device Support > Parsers > New > Upload XML
+-->
+<patternDefinitions>
+    <deviceType>
+        <vendor>Illumio</vendor>
+        <model>PCE</model>
+        <version>ANY</version>
+    </deviceType>
+
+    <eventFormatRecognizer><![CDATA[illumio-pce audit auditable]]></eventFormatRecognizer>
+
+    <parsingInstructions><![CDATA[
+        when:$_rawmsg regexp ".*illumio-pce audit auditable - (?<jsonBody>\\{.*\\})"
+        collectAndSetAttr($jsonBody);
+
+        setEventAttribute($_eventType, "Illumio-PCE-Audit");
+        setEventAttribute($reptDevName, $_hostname);
+
+        when:$_jsonBody contains "pce_fqdn"
+        extract:"pce_fqdn":"(?<pceFqdn>[^\"]+)";
+        setEventAttribute($hostName, $pceFqdn);
+
+        when:$_jsonBody contains "created_by_agent_hostname"
+        extract:"created_by_agent_hostname":"(?<agentHost>[^\"]+)";
+        setEventAttribute($user, $agentHost);
+
+        when:$_jsonBody contains "href"
+        extract:"href":"(?<href>[^\"]+)";
+        setEventAttribute($infoURL, $href);
+    ]]></parsingInstructions>
+</patternDefinitions>
