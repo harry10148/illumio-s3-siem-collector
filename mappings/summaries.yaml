@@ -1,0 +1,30 @@
+# CEF field map for Illumio traffic summaries (pd=0..3)
+cef_header:
+  vendor: "Illumio"
+  product: "PCE"
+  version: "1.0"
+  signature_id_field: "pd"
+  name_template: "Illumio Traffic pd={pd}"
+  severity_map:
+    "0": 3
+    "1": 6
+    "2": 9
+    "3": 4
+
+extensions:
+  src: "src_ip"
+  dst: "dst_ip"
+  dpt: "dst_port"
+  proto: "proto"
+  shost: "src_hostname"
+  dhost: "dst_hostname"
+  cs1: "pd"
+  cs1Label: "PolicyDecision"
+  cs2: "pd_qualifier"
+  cs2Label: "PDQualifier"
+  cs3: "dir"
+  cs3Label: "Direction"
+  cs4: "pce_fqdn"
+  cs4Label: "PCE"
+  suser: "un"
+  sproc: "pn"

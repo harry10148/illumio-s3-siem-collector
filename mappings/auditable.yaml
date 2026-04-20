@@ -1,0 +1,18 @@
+# CEF field map for Illumio auditable events
+cef_header:
+  vendor: "Illumio"
+  product: "PCE"
+  version: "1.0"
+  signature_id_field: "href"
+  name_template: "Illumio Audit Event"
+  severity_map_default: 5
+
+extensions:
+  cs1: "pce_fqdn"
+  cs1Label: "PCE"
+  cs2: "created_by.agent.hostname"
+  cs2Label: "AgentHostname"
+  cs3: "created_by.ven.href"
+  cs3Label: "VenHref"
+  cs4: "href"
+  cs4Label: "EventHref"
