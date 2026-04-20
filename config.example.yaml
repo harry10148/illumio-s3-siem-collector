@@ -1,103 +1,148 @@
-# Illumio S3 -> SIEM Collector - annotated example
-# Copy to config.yaml and edit; config.yaml is git-ignored.
+# ============================================================
+# Illumio S3 -> SIEM Collector — 設定範例
+# 複製為 config.yaml 後修改；config.yaml 已在 .gitignore 中
+# ============================================================
+#
+# 快速決策：我要收哪些 log？
+#
+#   log_type: auditable  → PCE 稽核事件（管理操作、VEN 上下線、policy 部署）← 必收
+#   log_type: pd2        → 封鎖流量（被 policy 實際封鎖的連線）               ← 必收
+#   log_type: pd1        → 潛在封鎖（測試模式下會被封鎖的連線）               ← 建議收
+#   log_type: pd0        → 允許流量（所有允許的連線，量極大，約佔 95%+）      ← 選收
+#   log_type: pd3        → 未知流量（policy 無法判定的連線）                   ← 視需要
+#
+# ============================================================
 
+# ── AWS 認證 ──────────────────────────────────────────────
+# 三選一：
+#   a) access_key + secret_key（原廠提供的 Access Key 文件）
+#   b) profile（AWS CLI 的 named profile，免填 key/secret）
+#   c) 兩者皆空（IAM role / 環境變數 AWS_ACCESS_KEY_ID）
 aws:
-  profile: null
-  access_key: "AKIA..."
-  secret_key: "..."
-  region: "ap-northeast-1"
+  profile: null                    # AWS CLI profile 名稱，null = 不使用
+  access_key: "AKIA..."            # Access Key ID（原廠文件提供）
+  secret_key: "..."                # Secret Access Key（原廠文件提供）
+  region: "ap-northeast-1"        # S3 bucket 所在 region（不確定時用 s3_log_checker.py 確認）
 
+# ── S3 來源 ───────────────────────────────────────────────
+# fqdn 和 org_id 是 S3 路徑的一部分：{fqdn}/org_id={org_id}/auditable/...
+# 填錯會找不到任何檔案
 source:
   type: s3
-  bucket: "illumio-flow-ap-scp45-msig-mingtai-com-tw"
-  fqdn: "ap-scp45.illum.io"
-  org_id: "4456569"
+  bucket: "illumio-flow-ap-scp45-msig-mingtai-com-tw"   # 原廠文件提供
+  fqdn: "ap-scp45.illum.io"                              # PCE FQDN，原廠文件提供
+  org_id: "4456569"                                      # PCE Org ID，純數字
 
+# ── Checkpoint（斷點續傳）────────────────────────────────
 checkpoint:
-  dir: "./state"
-  initial_lookback_hours: 0
-  atomic_write: true
+  dir: "./state"                   # 每個 pipeline 一個 JSON 檔存在這裡
+  initial_lookback_hours: 0        # 第一次啟動往回拉幾小時（0 = 只拉新資料；24 = 拉昨天到現在）
+  atomic_write: true               # 先寫暫存再 rename，避免 crash 時損毀
 
+# ── 日誌 ─────────────────────────────────────────────────
 logging:
-  level: INFO
+  level: INFO                      # DEBUG / INFO / WARN / ERROR
   dir: "./logs"
   file: "collector.log"
-  rotate_mb: 50
-  keep_files: 7
-  console: true
+  rotate_mb: 50                    # 單檔最大 MB，超過自動 rotate
+  keep_files: 7                    # 保留幾份舊檔
+  console: true                    # 是否同時印到終端
 
+# ── Pipelines ────────────────────────────────────────────
+# 每個 pipeline 獨立拉取、獨立 checkpoint、獨立排程。
+# 最常見的配置：開 audit + pd2（稽核 + 封鎖流量）兩個 pipeline。
 pipelines:
 
-  # Auditable events -> FortiSIEM over TLS (recommended)
-  - name: "audit-to-fortisiem"
+  # ── [必收] 稽核事件 ───────────────────────────────────
+  # 包含：VEN 上下線、policy 部署成功/失敗、管理員操作、使用者登入
+  - name: "audit"
     enabled: true
-    log_type: auditable
-    poll_interval_sec: 60
-    max_files_per_tick: 1000
+    log_type: auditable            # 稽核事件
+    poll_interval_sec: 60          # 每 60 秒拉一次（稽核事件量少，60s 夠用）
+    max_files_per_tick: 1000       # 每次最多處理 1000 個 S3 檔案
     mapper:
-      format: syslog_json
-      flatten: true
+      format: syslog_json          # RFC5424 header + 展平 JSON（FortiSIEM 推薦）
+      flatten: true                # 展平巢狀 JSON：created_by.agent.hostname → created_by_agent_hostname
     sink:
-      type: tls
+      type: tls                    # TLS 加密 TCP（推薦）
       host: "fortisiem.example.com"
-      port: 6514
+      port: 6514                   # FortiSIEM TLS syslog 預設 port
       tls:
-        verify: true
-        ca_file: null
+        verify: true               # 驗證 FortiSIEM 憑證；內部自簽可改 false
+        ca_file: null              # 自訂 CA 憑證路徑（null = 使用系統 CA）
       timeout_sec: 10
-      max_retries: 3
-      retry_backoff_sec: [1, 2, 4]
+      max_retries: 3               # 失敗重試 3 次
+      retry_backoff_sec: [1, 2, 4] # 重試間隔（秒）
 
-  # Blocked traffic
-  - name: "deny-traffic"
+  # ── [必收] 封鎖流量（pd=2）──────────────────────────
+  # 被 Illumio policy 實際 DENY 的流量，資安告警的核心來源
+  - name: "blocked"
     enabled: true
-    log_type: pd2
-    poll_interval_sec: 30
+    log_type: pd2                  # policy decision = 2 = Blocked
+    poll_interval_sec: 60
     mapper: { format: syslog_json, flatten: true }
     sink:
       type: tls
       host: "fortisiem.example.com"
       port: 6514
 
-  # Example: only forward SMB/RDP/SSH from "potentially-blocked"
-  - name: "pd1-smb-rdp-ssh-only"
+  # ── [建議收] 潛在封鎖流量（pd=1）───────────────────
+  # 目前允許，但在 Full Enforce 模式下會被封鎖的流量（Visibility/Selective 模式下產生）
+  # 用於識別「如果切換到 Enforce 模式，哪些流量會中斷」
+  - name: "potentially-blocked"
+    enabled: false                 # 需要時改 true
+    log_type: pd1                  # policy decision = 1 = PotentiallyBlocked
+    poll_interval_sec: 300         # 量比 pd2 大，可以拉長間隔
+    mapper: { format: syslog_json, flatten: true }
+    sink:
+      type: tls
+      host: "fortisiem.example.com"
+      port: 6514
+
+  # ── [選收] 允許流量（pd=0）─────────────────────────
+  # 被 policy 允許的所有流量。量極大（通常佔 S3 總量 95% 以上），
+  # 建議搭配 filter 只收感興趣的 port，否則會佔用大量 SIEM 授權/儲存空間。
+  - name: "allowed-sensitive-ports"
     enabled: false
-    log_type: pd1
+    log_type: pd0                  # policy decision = 0 = Allowed
     poll_interval_sec: 300
     filter:
-      expression: "ev.dst_port in (22, 445, 3389)"
+      expression: "ev.dst_port in (22, 23, 3389, 445, 1433, 3306, 5432)"
+      # 只收高風險 port 的允許流量（SSH/Telnet/RDP/SMB/MSSQL/MySQL/PostgreSQL）
     mapper: { format: syslog_json, flatten: true }
     sink:
       type: tls
       host: "fortisiem.example.com"
       port: 6514
 
-  # Example: CEF format (requires mapping file)
-  - name: "audit-cef-backup"
+  # ── [進階] 使用 CEF 格式 ────────────────────────────
+  # CEF 格式需要 mapping_file 指定欄位對應；
+  # 適用於已有 CEF parser 的 SIEM（Splunk / ArcSight）
+  - name: "audit-cef"
     enabled: false
     log_type: auditable
     poll_interval_sec: 300
     mapper:
       format: cef
-      mapping_file: "mappings/auditable.yaml"
+      mapping_file: "mappings/auditable.yaml"   # 欄位對應設定檔
     sink:
       type: tcp
       host: "fortisiem.example.com"
-      port: 1470
+      port: 1470                   # FortiSIEM TCP syslog 預設 port
 
-  # Example: HTTPS with batching
-  - name: "audit-https-batch"
+  # ── [進階] HTTPS batch（Splunk / Elastic）─────────
+  - name: "audit-https"
     enabled: false
     log_type: auditable
     poll_interval_sec: 120
-    mapper: { format: json, flatten: true }
+    mapper: { format: json, flatten: true }     # 純 JSON，適合 HTTP receiver
     sink:
       type: https
       url: "https://fortisiem.example.com/rawupload?vendor=Illumio&model=PCE"
-      batch_size: 100
+      batch_size: 100              # 累積 100 筆再一次送出
       timeout_sec: 10
 
-  # Example: UDP test only (<=1024 bytes)
+  # ── [測試用] UDP（本機 nc -lu 5514 接收）────────────
   - name: "test-udp"
     enabled: false
     log_type: auditable
@@ -106,4 +151,4 @@ pipelines:
     sink:
       type: udp
       host: "127.0.0.1"
-      port: 514
+      port: 5514                   # 注意：UDP 每則限制 1024 bytes，長訊息會被截斷
