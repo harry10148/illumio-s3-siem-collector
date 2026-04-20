@@ -98,3 +98,115 @@ class Pipeline:
                 stats["failed"] += 1
                 return False, sent_in_file
         return True, sent_in_file
+
+
+# ---- factory ----------------------------------------------------------------
+
+def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
+    """Convert an AppConfig into a list of (Pipeline, poll_interval_sec).
+
+    Returns only enabled pipelines. Raises on configuration errors so the
+    program fails fast.
+    """
+    import boto3
+    from pathlib import Path
+
+    from core.checkpoint import CheckpointStore
+    from core.expression_filter import compile_expression
+    from mappers.cef import CefMapper
+    from mappers.passthrough import PassthroughMapper
+    from mappers.syslog_json import SyslogJsonMapper
+    from sinks.https_sink import HttpsSink
+    from sinks.tcp_sink import TcpSink
+    from sinks.tls_sink import TlsSink
+    from sinks.udp_sink import UdpSink
+    from sources.s3_source import S3Source
+
+    if cfg.aws.profile:
+        session = boto3.Session(profile_name=cfg.aws.profile, region_name=cfg.aws.region)
+    elif cfg.aws.access_key:
+        session = boto3.Session(
+            aws_access_key_id=cfg.aws.access_key,
+            aws_secret_access_key=cfg.aws.secret_key,
+            region_name=cfg.aws.region,
+        )
+    else:
+        session = boto3.Session(region_name=cfg.aws.region)
+    s3_client = session.client("s3")
+
+    source = S3Source(
+        bucket=cfg.source.bucket,
+        fqdn=cfg.source.fqdn,
+        org_id=cfg.source.org_id,
+        s3_client=s3_client,
+    )
+
+    store = CheckpointStore(cfg.checkpoint.dir)
+
+    result: list[tuple[Pipeline, int]] = []
+    for pc in cfg.pipelines:
+        if not pc.enabled:
+            continue
+
+        mapper_cfg = pc.mapper
+        if mapper_cfg.format == "syslog_json":
+            mapper = SyslogJsonMapper(
+                log_type=pc.log_type,
+                flatten_enabled=mapper_cfg.flatten,
+                flatten_separator=mapper_cfg.flatten_separator,
+                flatten_max_depth=mapper_cfg.flatten_max_depth,
+                array_strategy=mapper_cfg.array_strategy,
+            )
+        elif mapper_cfg.format == "cef":
+            mapper = CefMapper(log_type=pc.log_type,
+                               mapping_path=Path(mapper_cfg.mapping_file))
+        elif mapper_cfg.format == "json":
+            mapper = PassthroughMapper(
+                flatten_enabled=mapper_cfg.flatten,
+                flatten_separator=mapper_cfg.flatten_separator,
+                flatten_max_depth=mapper_cfg.flatten_max_depth,
+                array_strategy=mapper_cfg.array_strategy,
+            )
+        else:
+            raise ValueError(f"unknown mapper format: {mapper_cfg.format}")
+
+        sc = pc.sink
+        if sc.type == "udp":
+            sink = UdpSink(host=sc.host, port=sc.port)
+        elif sc.type == "tcp":
+            sink = TcpSink(host=sc.host, port=sc.port,
+                           timeout_sec=sc.timeout_sec,
+                           max_retries=sc.max_retries,
+                           retry_backoff_sec=sc.retry_backoff_sec)
+        elif sc.type == "tls":
+            tls = sc.tls
+            sink = TlsSink(host=sc.host, port=sc.port,
+                           verify=tls.verify if tls else True,
+                           ca_file=tls.ca_file if tls else None,
+                           timeout_sec=sc.timeout_sec,
+                           max_retries=sc.max_retries,
+                           retry_backoff_sec=sc.retry_backoff_sec)
+        elif sc.type == "https":
+            sink = HttpsSink(url=sc.url,
+                             batch_size=sc.batch_size,
+                             verify_tls=sc.tls.verify if sc.tls else True,
+                             timeout_sec=sc.timeout_sec,
+                             max_retries=sc.max_retries,
+                             retry_backoff_sec=sc.retry_backoff_sec)
+        else:
+            raise ValueError(f"unknown sink type: {sc.type}")
+
+        filter_fn = compile_expression(pc.filter.expression) if pc.filter else None
+
+        pipeline = Pipeline(
+            name=pc.name,
+            log_type=pc.log_type,
+            source=source,
+            mapper=mapper,
+            sink=sink,
+            checkpoint_store=store,
+            filter_fn=filter_fn,
+            max_files_per_tick=pc.max_files_per_tick,
+        )
+        result.append((pipeline, pc.poll_interval_sec))
+    return result
