@@ -1,0 +1,56 @@
+# ========== SECRETS (highest priority) ==========
+# Customer access key files — any common pattern
+*Access-Key.txt
+*access-key*.txt
+*AccessKey*.txt
+*credentials*.txt
+*credentials*.json
+*-secret.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Runtime config (may contain credentials inline)
+config.yaml
+config.sandbox.yaml
+config.*.local.yaml
+
+# ========== Runtime state ==========
+state/
+state_*/
+logs/
+logs_*/
+dist/
+
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ========== OS ==========
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== Probe / scratch ==========
+_probe*.py
+_scratch*
+_save_to_mem0.py
+
+# ========== Build artifacts ==========
+build/
+*.tar.gz
+*.zip
