@@ -64,8 +64,10 @@ try {
     Write-Warning "NSSM download failed ($_). Bundle will use New-Service fallback."
 }
 
-Write-Host "==> Copying install script"
-Copy-Item (Join-Path $RepoRoot "scripts/install.ps1") $Bundle
+Write-Host "==> Copying install / uninstall / preflight scripts"
+Copy-Item (Join-Path $RepoRoot "scripts/install.ps1")   $Bundle
+Copy-Item (Join-Path $RepoRoot "scripts/uninstall.ps1") $Bundle
+Copy-Item (Join-Path $RepoRoot "scripts/preflight.sh")  $Bundle
 
 @"
 illumio-s3-siem-collector v$Version

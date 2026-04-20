@@ -50,8 +50,10 @@ cp -r \
   "${BUNDLE}/app/"
 
 cp "${REPO_ROOT}/docs/systemd/illumio-collector.service" "${BUNDLE}/systemd/"
-cp "${REPO_ROOT}/scripts/install.sh" "${BUNDLE}/install.sh"
-chmod +x "${BUNDLE}/install.sh"
+cp "${REPO_ROOT}/scripts/install.sh"    "${BUNDLE}/install.sh"
+cp "${REPO_ROOT}/scripts/uninstall.sh"  "${BUNDLE}/uninstall.sh"
+cp "${REPO_ROOT}/scripts/preflight.sh"  "${BUNDLE}/preflight.sh"
+chmod +x "${BUNDLE}/install.sh" "${BUNDLE}/uninstall.sh" "${BUNDLE}/preflight.sh"
 
 cat > "${BUNDLE}/VERSION" <<EOF
 illumio-s3-siem-collector v${VERSION}

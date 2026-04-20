@@ -94,6 +94,31 @@ cd illumio_s3_collector
 
 ---
 
+### 安裝前測試（preflight check）
+
+建議在執行 `install.sh` 前先跑一次 preflight，確認 Python、依賴套件、config 語法、S3 連線都沒問題。
+全程不需要 sudo，不寫入任何系統路徑，完成後自動清掉 temp。
+
+```bash
+# 解壓 bundle（如果還沒解壓）
+tar xzf illumio-collector-linux-x86_64-v1.0.tar.gz
+cd bundle
+
+# 先準備好 config（從 example 複製後填入認證）
+cp app/config.example.yaml /tmp/config.yaml
+vi /tmp/config.yaml
+
+# 只驗證 config 語法
+bash preflight.sh --config /tmp/config.yaml
+
+# 同時測試 S3 連線（推薦）
+bash preflight.sh --config /tmp/config.yaml --test-s3
+```
+
+輸出結尾看到 `PASS` 就可以安心執行 `sudo ./install.sh`。
+
+---
+
 ### 安裝後（兩種方式相同）
 
 #### Linux
