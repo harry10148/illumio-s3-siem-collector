@@ -2,35 +2,210 @@
 
 Pull Illumio PCE logs (auditable events, traffic summaries) from an AWS S3
 bucket, convert them to Syslog-JSON / CEF / JSON, and forward them to a SIEM
-(designed for SIEM) over UDP / TCP / TLS / HTTPS.
+over UDP / TCP / TLS / HTTPS.
 
-- Multi-pipeline: each log type can go to a different destination with its
-  own poll interval, format, and filter.
-- Built-in scheduler (APScheduler) — no external cron / Task Scheduler.
-- Checkpoint via atomic JSON file; resumes after restart with at-least-once
-  semantics (SIEM must tolerate duplicates; SIEM rule-based dedup works).
-- Offline-installable bundles for Linux and Windows: **target needs no
-  Python, no pip, no internet**.
+- **Multi-pipeline** — each log type can go to a different destination with its own poll interval, format, and filter.
+- **Built-in scheduler** (APScheduler) — no external cron / Task Scheduler.
+- **Checkpoint** via atomic JSON file; resumes after restart with at-least-once semantics.
+- **Offline-installable** bundles for Linux and Windows: target needs no Python, no pip, no internet.
 
 ---
 
-## Step 1 — 決定要收哪些 log
+## 目錄
 
-這是最重要的設定。每個 pipeline 對應 S3 bucket 裡的一個資料夾：
-
-| `log_type` | 中文說明 | S3 路徑 | 建議收集 |
-|---|---|---|---|
-| `auditable` | **稽核事件** — PCE 管理操作、VEN 狀態變更、使用者登入、政策部署 | `{fqdn}/org_id={id}/auditable/` | ✅ 必收 |
-| `pd2` | **封鎖流量** — 被 policy 實際封鎖的連線 | `{fqdn}/org_id={id}/pd=2/` | ✅ 必收 |
-| `pd1` | **潛在封鎖** — 目前允許但在 Enforce 模式下會被封鎖的連線 | `{fqdn}/org_id={id}/pd=1/` | ✅ 建議收 |
-| `pd0` | **允許流量** — 所有被允許的連線（量大，約佔 95%+） | `{fqdn}/org_id={id}/pd=0/` | ⚠️ 選收（量大） |
-| `pd3` | **未知流量** — policy 無法判定的連線 | `{fqdn}/org_id={id}/pd=3/` | ⚪ 視需要 |
-
-> **最小配置建議：** 只開 `auditable` + `pd2`（稽核 + 封鎖），這兩個涵蓋資安告警最核心的需求。
+1. [選擇安裝方式](#選擇安裝方式)
+2. [方式一：git clone（目標主機有網路）](#方式一git-clone目標主機有網路)
+3. [方式二：離線 bundle（目標主機無網路）](#方式二離線-bundle目標主機無網路)
+4. [設定說明](#設定說明)
+5. [完整參數說明](#完整參數說明)
+6. [日常操作](#日常操作)
+7. [更新](#更新)
+8. [解除安裝](#解除安裝)
+9. [排錯](#排錯)
+10. [SIEM 設定](#siem-設定)
 
 ---
 
-## Step 2 — 最小可用 config
+## 選擇安裝方式
+
+| 方式 | 目標主機需要 | 適用場景 |
+|---|---|---|
+| **git clone** | Python 3.x、pip、網路 | 開發測試、目標主機可聯網 |
+| **離線 bundle** | 無（Python runtime 已內含） | 客戶環境、無法連網的生產主機 |
+
+---
+
+## 方式一：git clone（目標主機有網路）
+
+前提：目標主機有 `python3`（3.9+）、`pip`、`git`。
+
+### Linux
+
+```bash
+# 1. Clone 專案
+git clone <repo_url>
+cd illumio_s3_collector
+
+# 2. 建立 virtualenv 並安裝相依套件
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 3. 準備設定
+cp config.example.yaml config.yaml
+vi config.yaml          # 填入 AWS 認證 + SIEM IP/port（見下方設定說明）
+
+# 4. Preflight 測試（不需要 sudo）
+bash scripts/preflight.sh --config config.yaml --test-s3
+# → 結尾出現 PASS 再繼續
+
+# 5. 正式安裝成 systemd 服務（建立 venv + service）
+sudo bash scripts/install.sh
+
+# 6. 填好 config 後啟動
+sudo vi /etc/illumio-collector/config.yaml
+sudo systemctl start illumio-collector
+sudo journalctl -u illumio-collector -f
+```
+
+> **不想裝成服務，只想直接跑：**
+> ```bash
+> source venv/bin/activate
+> python collector.py --config config.yaml
+> ```
+
+### Windows
+
+前提：`python`（3.9+）已安裝且在 PATH。
+
+```powershell
+# 1. Clone 專案
+git clone <repo_url>
+cd illumio_s3_collector
+
+# 2. 建立 virtualenv 並安裝相依套件
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. 準備設定
+Copy-Item config.example.yaml config.yaml
+notepad config.yaml      # 填入 AWS 認證 + SIEM IP/port
+
+# 4. Preflight 測試（不需要 Administrator）
+.\scripts\preflight.ps1 -Config config.yaml -TestS3
+# → 結尾出現 PASS 再繼續
+
+# 5. 正式安裝成 Windows 服務 — 需要 Administrator PowerShell
+.\scripts\install.ps1
+
+# 6. 填好 config 後啟動
+notepad C:\illumio-collector\config.yaml
+Start-Service IllumioCollector
+Get-Content C:\illumio-collector\logs\collector.log -Wait
+```
+
+> **不想裝成服務，只想直接跑：**
+> ```powershell
+> venv\Scripts\activate
+> python collector.py --config config.yaml
+> ```
+
+---
+
+## 方式二：離線 bundle（目標主機無網路）
+
+Bundle 內含 Python 3.11 runtime + 所有 wheels，目標主機完全不需要 Python 或網路。
+
+### Linux
+
+**Step 1 — 在有網路的 build host 建 bundle**
+
+```bash
+git clone <repo_url>
+cd illumio_s3_collector
+bash scripts/build_offline_bundle.sh
+# → dist/illumio-collector-linux-x86_64-v1.0.tar.gz  (~47 MB)
+```
+
+**Step 2 — 把 `.tar.gz` 複製到目標主機**（USB、SCP、跳板機等）
+
+**Step 3 — 在目標主機安裝**
+
+```bash
+tar xzf illumio-collector-linux-x86_64-v1.0.tar.gz
+cd bundle
+
+# （選用）先跑 preflight 確認環境沒問題
+cp app/config.example.yaml /tmp/config.yaml && vi /tmp/config.yaml
+bash preflight.sh --config /tmp/config.yaml --test-s3
+
+# 正式安裝
+sudo ./install.sh
+sudo vi /etc/illumio-collector/config.yaml
+sudo systemctl start illumio-collector
+sudo journalctl -u illumio-collector -f
+```
+
+### Windows
+
+**Step 1 — 在有網路的 build host 建 bundle**
+
+```powershell
+git clone <repo_url>
+cd illumio_s3_collector
+.\scripts\build_offline_bundle.ps1
+# → dist\illumio-collector-windows-x86_64-v1.0.zip
+```
+
+**Step 2 — 把 `.zip` 複製到目標主機**
+
+**Step 3 — 以 Administrator PowerShell 安裝**
+
+```powershell
+Expand-Archive illumio-collector-windows-x86_64-v1.0.zip C:\illumio-bundle
+cd C:\illumio-bundle
+
+# （選用）preflight
+Copy-Item app\config.example.yaml C:\temp\config.yaml
+notepad C:\temp\config.yaml
+.\preflight.ps1 -Config C:\temp\config.yaml -TestS3
+
+# 正式安裝
+.\install.ps1
+notepad C:\illumio-collector\config.yaml
+Start-Service IllumioCollector
+Get-Content C:\illumio-collector\logs\collector.log -Wait
+```
+
+### 安裝後目錄結構（Linux）
+
+| 路徑 | 內容 |
+|---|---|
+| `/opt/illumio-collector/app/` | 程式碼 |
+| `/opt/illumio-collector/python/` | Python 3.11 runtime（bundle 模式） |
+| `/opt/illumio-collector/venv/` | Python venv（git clone 模式） |
+| `/etc/illumio-collector/config.yaml` | 設定檔（**需手動填入認證**） |
+| `/var/lib/illumio-collector/state/` | Checkpoint 檔 |
+| `/var/log/illumio-collector/` | Log 檔 |
+
+---
+
+## 設定說明
+
+### Step 1 — 決定要收哪些 log
+
+| `log_type` | 中文說明 | 建議 |
+|---|---|---|
+| `auditable` | **稽核事件** — 管理操作、VEN 狀態、登入、policy 部署 | ✅ 必收 |
+| `pd2` | **封鎖流量** — 被 policy 實際封鎖的連線 | ✅ 必收 |
+| `pd1` | **潛在封鎖** — Enforce 模式下會被封鎖的連線 | ✅ 建議收 |
+| `pd0` | **允許流量** — 所有允許連線（量大，約佔 95%+） | ⚠️ 選收 |
+| `pd3` | **未知流量** — policy 無法判定的連線 | ⚪ 視需要 |
+
+> **最小配置建議：** 只開 `auditable` + `pd2`（稽核 + 封鎖），涵蓋資安告警核心需求。
+
+### Step 2 — 最小可用 config
 
 複製 `config.example.yaml` → `config.yaml`，修改以下必填欄位：
 
@@ -38,16 +213,15 @@ bucket, convert them to Syslog-JSON / CEF / JSON, and forward them to a SIEM
 aws:
   access_key: "AKIA..."           # AWS Access Key ID（原廠文件提供）
   secret_key: "..."               # AWS Secret Access Key（原廠文件提供）
-  # region 不需要填，boto3 會自動偵測
 
 source:
   bucket: "illumio-flow-..."      # S3 bucket 名稱
   fqdn: "your-pce.illum.io"       # PCE FQDN（在 bucket 路徑裡）
-  org_id: "123456"               # PCE Org ID（在 bucket 路徑裡）
+  org_id: "123456"                # PCE Org ID（在 bucket 路徑裡）
 
 pipelines:
   - name: "audit"
-    log_type: auditable            # 稽核事件
+    log_type: auditable
     poll_interval_sec: 60
     mapper: { format: syslog_json }
     sink:
@@ -56,7 +230,7 @@ pipelines:
       port: 6514
 
   - name: "blocked"
-    log_type: pd2                  # 封鎖流量
+    log_type: pd2
     poll_interval_sec: 60
     mapper: { format: syslog_json }
     sink:
@@ -65,22 +239,16 @@ pipelines:
       port: 6514
 ```
 
-驗證設定：
+### Step 3 — 驗證與測試
+
 ```bash
+# 驗證 config 語法（不連 S3 / SIEM）
 python collector.py --config config.yaml --dry-run
-```
 
----
-
-## Step 3 — 測試單一 pipeline
-
-```bash
+# 跑一次 pipeline 確認有資料送出
 python collector.py --config config.yaml --once audit
-```
 
-確認 SIEM 收到訊息後再啟動正式排程：
-
-```bash
+# 確認 SIEM 收到後再啟動排程
 python collector.py --config config.yaml
 ```
 
@@ -94,11 +262,10 @@ python collector.py --config config.yaml
 |---|---|---|
 | `access_key` | AWS Access Key ID | `"AKIA..."` |
 | `secret_key` | AWS Secret Access Key | `"abc123..."` |
-| `region` | S3 bucket region（**選填**，可填 `null`） | `"ap-northeast-1"` 或 `null` |
+| `region` | S3 bucket region（**選填**，可填 `null`） | `"ap-northeast-1"` |
 | `profile` | 使用 AWS CLI profile（與 key/secret 二選一） | `"my-profile"` |
 
-> **region 可以不填。** boto3 會自動偵測，S3 redirect 機制會把請求導到正確的 region。
-> 只有在連線出現 `AuthorizationHeaderMalformed` 錯誤時，才需要明確填入（格式如 `"ap-northeast-1"`）。
+> `region` 可以不填。boto3 會自動偵測，只有在出現 `AuthorizationHeaderMalformed` 錯誤時才需要填。
 
 ### `source` 區塊
 
@@ -114,46 +281,32 @@ python collector.py --config config.yaml
 
 | 參數 | 預設 | 說明 |
 |---|---|---|
-| `dir` | `./state` | checkpoint 存放目錄；每個 pipeline 一個 JSON 檔 |
-| `initial_lookback_hours` | `0` | 第一次啟動往回拉幾小時的資料（0 = 只拉新資料） |
-| `atomic_write` | `true` | 寫入前先寫暫存再 rename，避免寫到一半損毀 |
-
-> 刪除 `state/<pipeline-name>.json` 可以重播指定 pipeline 的歷史資料。
+| `dir` | `./state` | checkpoint 存放目錄 |
+| `initial_lookback_hours` | `0` | 第一次啟動往回拉幾小時（0 = 只拉新資料） |
+| `atomic_write` | `true` | 先寫暫存再 rename，防止 crash 時損毀 |
 
 ### `pipelines` 區塊
-
-每個 pipeline 獨立，以下是完整欄位：
 
 | 欄位 | 必填 | 預設 | 說明 |
 |---|---|---|---|
 | `name` | ✅ | — | 唯一名稱（英數+連字號），用於 checkpoint 檔名 |
-| `log_type` | ✅ | — | 見下方 log_type 說明 |
-| `enabled` | | `true` | `false` 可暫時停用不刪設定 |
-| `poll_interval_sec` | | `60` | 多久拉一次，最小 10 秒 |
-| `max_files_per_tick` | | `1000` | 每次最多處理幾個 S3 檔案（防止單次 tick 太久） |
-| `filter.expression` | | — | 事件過濾條件（見下方） |
-| `mapper.format` | | `syslog_json` | 輸出格式（見下方） |
-| `mapper.flatten` | | `true` | 是否展平巢狀 JSON（SIEM 需要 true） |
-| `sink.type` | ✅ | — | 傳輸方式（見下方） |
-
-#### `log_type` — 對應 S3 路徑與資料內容
-
-| 值 | Illumio 術語 | 內容 | 典型量 |
-|---|---|---|---|
-| `auditable` | Auditable Events | 管理操作、VEN 上下線、policy 部署、登入登出 | 低 |
-| `pd0` | Allowed Flows | policy decision = 0，允許的流量 | 極高 |
-| `pd1` | Potentially Blocked | policy decision = 1，測試模式下潛在封鎖的流量 | 中 |
-| `pd2` | Blocked Flows | policy decision = 2，實際封鎖的流量 | 低～中 |
-| `pd3` | Unknown Flows | policy decision = 3，無法判定的流量 | 低 |
+| `log_type` | ✅ | — | `auditable` / `pd0` / `pd1` / `pd2` / `pd3` |
+| `enabled` | | `true` | `false` 可暫時停用 |
+| `poll_interval_sec` | | `60` | 最小 10 秒 |
+| `max_files_per_tick` | | `1000` | 每次最多處理幾個 S3 檔案 |
+| `filter.expression` | | — | 事件過濾條件 |
+| `mapper.format` | | `syslog_json` | 輸出格式 |
+| `mapper.flatten` | | `true` | 展平巢狀 JSON（SIEM 需要 true） |
+| `sink.type` | ✅ | — | `tls` / `tcp` / `udp` / `https` |
 
 #### `sink.type` — 傳輸方式
 
-| 值 | 說明 | 必填參數 | 限制 |
-|---|---|---|---|
-| `tls` | TCP + TLS（**推薦**） | `host`, `port` | 每則 ≤ 8192 bytes |
-| `tcp` | 純 TCP（明文） | `host`, `port` | 每則 ≤ 8192 bytes |
-| `udp` | UDP（無連線確認） | `host`, `port` | 每則 ≤ 1024 bytes |
-| `https` | HTTPS batch POST | `url` | NDJSON，批次送出 |
+| 值 | 說明 | 必填參數 |
+|---|---|---|
+| `tls` | TCP + TLS（**推薦**） | `host`, `port` |
+| `tcp` | 純 TCP（明文） | `host`, `port` |
+| `udp` | UDP（無連線確認） | `host`, `port` |
+| `https` | HTTPS batch POST | `url` |
 
 SIEM 預設監聽 port：TLS = **6514**，TCP = **1470**，UDP = **514**。
 
@@ -162,25 +315,15 @@ SIEM 預設監聽 port：TLS = **6514**，TCP = **1470**，UDP = **514**。
 | 值 | 說明 | 適用場景 |
 |---|---|---|
 | `syslog_json` | RFC5424 header + 展平 JSON body | SIEM（**推薦**） |
-| `cef` | CEF 格式，需 `mapping_file` | 其他支援 CEF 的 SIEM |
-| `json` | 純 JSON，適合 HTTPS sink | Splunk / Elastic HTTP receiver |
+| `cef` | CEF 格式，需 `mapping_file` | 支援 CEF 的 SIEM |
+| `json` | 純 JSON | Splunk / Elastic HTTP receiver |
 
 #### `filter.expression` — 事件過濾
 
-使用 `ev.欄位名` 存取事件欄位（支援巢狀路徑）：
-
 ```yaml
-# 只收封鎖流量（pd2 已是單一 log_type，通常不需再 filter）
-filter:
-  expression: "ev.pd == 2"
-
-# 只收特定 port 的流量
+# 只收高風險 port 的允許流量
 filter:
   expression: "ev.dst_port in (22, 445, 3389)"
-
-# 排除 healthcheck agent
-filter:
-  expression: "ev.created_by.agent.hostname != 'healthcheck'"
 
 # 只收 failure 等級的稽核事件
 filter:
@@ -191,156 +334,258 @@ filter:
   expression: "ev.pd == 2 and ev.dst_port in (22, 445, 3389)"
 ```
 
-> 欄位名稱參考：`auditable` 事件看 `docs/Flow Logs and Auditable Event Logs for Illumio SaaS Core PCE.md`；流量事件看 `docs/Illumio PCE Traffic Summaries Log Format.md`。
+> 欄位名稱參考：稽核事件 → `docs/Flow Logs and Auditable Event Logs for Illumio SaaS Core PCE.md`；流量事件 → `docs/Illumio PCE Traffic Summaries Log Format.md`
 
 ---
 
-## 建立 Offline Bundle（給 build host）
+## 日常操作
 
-> **前提：** build host 需要能連網際網路 + 已安裝 git + Python 3.x + pip。
-> 客戶端（離線環境）**完全不需要** Python、pip 或網路。
-
-### Linux bundle
-
-```bash
-# 1. Clone 專案（只需一次）
-git clone <repo_url>
-cd illumio_s3_collector
-
-# 2. 建 bundle（會自動下載 Python 3.11 runtime + 所有 wheels）
-bash scripts/build_offline_bundle.sh
-
-# 3. 把 bundle 傳到離線環境
-#    -> dist/illumio-collector-linux-x86_64-v1.0.tar.gz  (~47 MB)
-```
-
-未來要更新時：
-```bash
-git pull                        # 拉最新程式碼
-bash scripts/build_offline_bundle.sh   # 重新建 bundle
-```
-
-### Windows bundle
-
-```powershell
-# 1. Clone 專案
-git clone <repo_url>
-cd illumio_s3_collector
-
-# 2. 建 bundle（需要 PowerShell + internet）
-.\scripts\build_offline_bundle.ps1
-
-# 3. 傳到離線環境
-#    -> dist\illumio-collector-windows-x86_64-v1.0.zip
-```
-
----
-
-## Offline install
-
-```bash
-./scripts/build_offline_bundle.sh
-# -> dist/illumio-collector-linux-x86_64-v1.0.tar.gz
-```
-
-On the target:
-```bash
-tar xzf illumio-collector-linux-x86_64-v1.0.tar.gz
-cd bundle
-sudo ./install.sh
-sudo vi /etc/illumio-collector/config.yaml
-sudo systemctl start illumio-collector
-sudo journalctl -u illumio-collector -f
-```
-
-### Windows
-
-PowerShell on build host:
-```powershell
-.\scripts\build_offline_bundle.ps1
-# -> dist\illumio-collector-windows-x86_64-v1.0.zip
-```
-
-Administrator PowerShell on target:
-```powershell
-Expand-Archive illumio-collector-windows-x86_64-v1.0.zip C:\illumio-bundle
-cd C:\illumio-bundle
-.\install.ps1
-notepad C:\illumio-collector\config.yaml
-& "C:\illumio-collector\nssm\nssm-2.24\win64\nssm.exe" start IllumioCollector
-Get-Content C:\illumio-collector\logs\collector.log -Wait
-```
-
----
-
-## Operations
-
-> 完整操作手冊（安裝、更新、排錯）：**[docs/OPERATIONS.md](docs/OPERATIONS.md)**
-
-### 查看運作狀況
+### 查看服務狀態與 log
 
 ```bash
 # Linux
+sudo systemctl status illumio-collector
 sudo journalctl -u illumio-collector -f
 
 # 或直接看 log 檔
 tail -f /var/log/illumio-collector/collector.log
 ```
 
-Log 每行會顯示：
+```powershell
+# Windows
+Get-Service IllumioCollector
+Get-Content C:\illumio-collector\logs\collector.log -Wait
+```
+
+正常運作時每個 pipeline 每次 tick 會輸出一行：
 ```
 tick: files=12 read=847 sent=847 filtered=0 failed=0 checkpoint=...20260420_abc.jsonl.gz duration=2.31s
 ```
 
-### 重播歷史資料
+| 欄位 | 說明 |
+|---|---|
+| `files` | 本次從 S3 取了幾個檔案 |
+| `read` | 讀了幾行 JSON |
+| `sent` | 成功送出幾則事件 |
+| `filtered` | 被 filter 排除幾則 |
+| `failed` | sink 送出失敗幾則 |
 
-刪除 checkpoint 檔後重啟即可重播：
+### 啟動 / 停止 / 重啟
+
 ```bash
-# 重播 audit pipeline 的全部資料
-sudo rm /var/lib/illumio-collector/state/audit.json
+# Linux
+sudo systemctl start   illumio-collector
+sudo systemctl stop    illumio-collector
 sudo systemctl restart illumio-collector
 ```
 
-或透過 `initial_lookback_hours` 控制首次啟動往回拉多少小時（設定在 `checkpoint.initial_lookback_hours`）。
+```powershell
+# Windows
+Start-Service IllumioCollector
+Stop-Service  IllumioCollector
+Restart-Service IllumioCollector
+```
 
-### Troubleshooting
+### 修改設定
+
+修改設定後需重啟服務才會生效：
 
 ```bash
-# 1. 測試 S3 連線
+# Linux
+sudo vi /etc/illumio-collector/config.yaml
+
+# 先驗證語法
+sudo /opt/illumio-collector/python/bin/python3 \
+  /opt/illumio-collector/app/collector.py \
+  --config /etc/illumio-collector/config.yaml --dry-run
+
+sudo systemctl restart illumio-collector
+```
+
+```powershell
+# Windows
+notepad C:\illumio-collector\config.yaml
+C:\illumio-collector\python\python.exe `
+  C:\illumio-collector\app\collector.py `
+  --config C:\illumio-collector\config.yaml --dry-run
+Restart-Service IllumioCollector
+```
+
+### 重播歷史資料
+
+刪除 checkpoint 後重啟，該 pipeline 從 `initial_lookback_hours` 指定的時間點重新拉取：
+
+```bash
+# Linux — 重播 audit pipeline
+sudo systemctl stop illumio-collector
+sudo rm /var/lib/illumio-collector/state/audit.json
+sudo systemctl start illumio-collector
+
+# 重播所有 pipeline（慎用，SIEM 會收到重複事件）
+sudo rm /var/lib/illumio-collector/state/*.json
+```
+
+```powershell
+# Windows
+Stop-Service IllumioCollector
+Remove-Item C:\illumio-collector\state\audit.json
+Start-Service IllumioCollector
+```
+
+---
+
+## 更新
+
+> **原則：** 更新只換程式碼與套件，**設定檔和 checkpoint 全部保留。**
+
+### 離線 bundle 更新（Linux）
+
+```bash
+# 1. Build host：拉最新程式碼並重建 bundle
+git pull && bash scripts/build_offline_bundle.sh
+
+# 2. 複製新 bundle 到目標主機
+
+# 3. 目標主機：停止服務、安裝、啟動
+sudo systemctl stop illumio-collector
+tar xzf illumio-collector-linux-x86_64-vX.X.tar.gz && cd bundle
+sudo ./install.sh
+sudo systemctl start illumio-collector
+sudo journalctl -u illumio-collector -f
+```
+
+`install.sh` 更新時的行為：
+
+| 路徑 | 行為 |
+|---|---|
+| `/opt/illumio-collector/app/` | **覆蓋**（新程式碼） |
+| `/opt/illumio-collector/wheels/` | **覆蓋**（新套件） |
+| `/opt/illumio-collector/python/` | **保留**（已存在就不動） |
+| `/etc/illumio-collector/config.yaml` | **保留** |
+| `/var/lib/illumio-collector/state/` | **保留** |
+
+### git clone 更新（Linux）
+
+```bash
+git pull
+sudo systemctl stop illumio-collector
+sudo bash scripts/install.sh
+sudo systemctl start illumio-collector
+```
+
+---
+
+## 解除安裝
+
+預設**保留** config 和 checkpoint，加 `--purge` / `-Purge` 才會一併刪除。
+
+### Linux
+
+```bash
+# 保留 config + state（預設）
+sudo /opt/illumio-collector/uninstall.sh
+
+# 完全移除
+sudo /opt/illumio-collector/uninstall.sh --purge
+```
+
+### Windows
+
+```powershell
+# 保留 config + state（預設）
+& 'C:\illumio-collector\uninstall.ps1'
+
+# 完全移除
+& 'C:\illumio-collector\uninstall.ps1' -Purge
+```
+
+---
+
+## 排錯
+
+### 服務啟動失敗
+
+```bash
+sudo journalctl -u illumio-collector --no-pager | tail -30
+```
+
+常見原因：
+
+| 症狀 | 處理方式 |
+|---|---|
+| `config.yaml` 語法錯誤 | `python collector.py --config config.yaml --dry-run` |
+| SIEM host/port 無法連線 | `nc -zv <host> <port>`（TCP）；`nc -u -l <port>` 測試 UDP |
+| S3 認證失敗 | 用 `s3_log_checker.py` 驗證（見下方） |
+| `Read-only file system` | config 裡的路徑是相對路徑，重新執行 `install.sh` 讓它覆寫為絕對路徑 |
+
+### S3 連線測試
+
+```bash
+# git clone 模式
 python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> \
     --access-key <AK> --secret-key <SK>
 
-# 2. 驗證 config 語法
-python collector.py --config config.yaml --dry-run
-
-# 3. 跑一次 pipeline 看輸出（不啟動排程）
-python collector.py --config config.yaml --once <pipeline-name>
+# bundle 模式（已安裝）
+sudo /opt/illumio-collector/python/bin/python3 \
+  /opt/illumio-collector/app/s3_log_checker.py \
+  --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK>
 ```
 
-### Upgrading
+### 手動跑一次 pipeline（不啟動排程）
 
-1. Stop the service
-2. Re-run `install.sh` / `install.ps1` from the new bundle
-3. Config and state are preserved
-4. Start the service
+```bash
+# git clone 模式
+python collector.py --config config.yaml --once <pipeline-name>
+
+# bundle 模式（已安裝）
+sudo /opt/illumio-collector/python/bin/python3 \
+  /opt/illumio-collector/app/collector.py \
+  --config /etc/illumio-collector/config.yaml --once <pipeline-name>
+```
+
+### SIEM 沒收到事件
+
+1. 確認 SIEM syslog receiver 已啟用（Admin → Device Support → Syslog）
+2. 確認 port 和協定正確（TLS=6514, TCP=1470, UDP=514）
+3. UDP 測試一定要加 `-u`：`nc -u -l 5514`
+4. TLS 憑證錯誤時暫時改 `tls.verify: false` 確認連通性
+5. 確認 SIEM custom parser 已匯入啟用（見 `siem_parser/README.md`）
+
+### 事件量為 0（`sent=0`）
+
+| 現象 | 原因 |
+|---|---|
+| `files=0` | S3 沒有新檔案（正常，PCE 無新事件） |
+| `files>0` 但 `sent=0` | sink 連線問題，查 log 中的 `SinkSendError` |
+| `filtered=read` | filter 條件過濾掉所有事件，檢查 `filter.expression` |
 
 ---
 
 ## SIEM 設定
 
-Import parsers from `siem_parser/`. See `siem_parser/README.md`.
+Import parsers from `siem_parser/`:
+
+1. SIEM GUI → Admin → Device Support → Parsers → **New** → Upload XML
+2. 上傳 `siem_parser/IllumioPCE_Auditable.xml` 和 `IllumioPCE_Summaries.xml`
+3. Set **Enabled = Yes** → **Apply**
+
+詳細說明見 `siem_parser/README.md`。
 
 ---
 
 ## Architecture
 
-Full design: `docs/superpowers/specs/2026-04-20-illumio-s3-siem-collector-design.md`.
+```
+  S3 Source ──> Mapper (flatten + format) ──> Sink (UDP/TCP/TLS/HTTPS)
+                      │                              │
+                 filter (opt)                  retry + backoff
+                      │
+                 checkpoint (atomic JSON)
+```
 
-```
-  Source (S3) -> Mapper (flatten + format) -> Sink (UDP/TCP/TLS/HTTPS)
-                        |                          |
-                    filter (opt)               retry + backoff
-```
+Full design spec: `docs/superpowers/specs/2026-04-20-illumio-s3-siem-collector-design.md`
+
+---
 
 ## License
 
