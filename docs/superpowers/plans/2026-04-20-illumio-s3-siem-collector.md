@@ -1153,7 +1153,7 @@ def test_auditable_event_header():
     m = SyslogJsonMapper(log_type="auditable")
     ev = {
         "timestamp": "2026-04-20T07:00:17.395Z",
-        "pce_fqdn": "ap-scp45.illum.io",
+        "pce_fqdn": "your-pce.illum.io",
         "href": "/orgs/1/events/x",
         "created_by": {"agent": {"hostname": "host1"}},
     }
@@ -1162,7 +1162,7 @@ def test_auditable_event_header():
     assert h["pri"] == 134
     assert h["version"] == "1"
     assert h["timestamp"] == "2026-04-20T07:00:17.395Z"
-    assert h["hostname"] == "ap-scp45.illum.io"
+    assert h["hostname"] == "your-pce.illum.io"
     assert h["appname"] == "illumio-pce"
     assert h["procid"] == "audit"
     assert h["msgid"] == "auditable"
@@ -3089,9 +3089,9 @@ aws:
 
 source:
   type: s3
-  bucket: "illumio-flow-ap-scp45-msig-mingtai-com-tw"
-  fqdn: "ap-scp45.illum.io"
-  org_id: "4456569"
+  bucket: "illumio-flow-XXXXXXXX-your-bucket"
+  fqdn: "your-pce.illum.io"
+  org_id: "123456"
 
 checkpoint:
   dir: "./state"

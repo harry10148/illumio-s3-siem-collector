@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Plan complete, ready to execute.**
+**v1.0 shipped. Ready to deploy to customer.**
 
 ## Summary
 

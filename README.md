@@ -42,8 +42,8 @@ aws:
 
 source:
   bucket: "illumio-flow-..."      # S3 bucket 名稱
-  fqdn: "ap-scp45.illum.io"       # PCE FQDN（在 bucket 路徑裡）
-  org_id: "4456569"               # PCE Org ID（在 bucket 路徑裡）
+  fqdn: "your-pce.illum.io"       # PCE FQDN（在 bucket 路徑裡）
+  org_id: "123456"               # PCE Org ID（在 bucket 路徑裡）
 
 pipelines:
   - name: "audit"

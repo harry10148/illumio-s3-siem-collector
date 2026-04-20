@@ -29,9 +29,9 @@ aws:
 # 填錯會找不到任何檔案
 source:
   type: s3
-  bucket: "illumio-flow-ap-scp45-msig-mingtai-com-tw"   # 原廠文件提供
-  fqdn: "ap-scp45.illum.io"                              # PCE FQDN，原廠文件提供
-  org_id: "4456569"                                      # PCE Org ID，純數字
+  bucket: "illumio-flow-XXXXXXXX-your-bucket"   # 原廠文件提供
+  fqdn: "your-pce.illum.io"                              # PCE FQDN，原廠文件提供
+  org_id: "123456"                                      # PCE Org ID，純數字
 
 # ── Checkpoint（斷點續傳）────────────────────────────────
 checkpoint:
