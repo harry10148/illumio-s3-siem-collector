@@ -142,11 +142,14 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
     )
 
     store = CheckpointStore(cfg.checkpoint.dir)
+    lookback = cfg.checkpoint.initial_lookback_hours
 
     result: list[tuple[Pipeline, int]] = []
     for pc in cfg.pipelines:
         if not pc.enabled:
             continue
+        if store.load(pc.name).last_modified is None:
+            store.save(store.fresh(pc.name, lookback))
 
         mapper_cfg = pc.mapper
         if mapper_cfg.format == "syslog_json":
