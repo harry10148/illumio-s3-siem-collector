@@ -1,28 +1,42 @@
 #!/usr/bin/env bash
 # Install the Illumio S3 -> SIEM Collector.
 #
-# Supports two modes:
+# Supports two modes (auto-detected):
 #   bundle   — run from inside an extracted offline bundle
-#              (python-runtime.tar.gz present alongside this script)
 #   gitclone — run from the repository root's scripts/ directory
-#              (requires system python3; internet access for pip)
+#
+# Options:
+#   --user <name>   Run the service as this existing user.
+#                   Default: creates and uses a dedicated 'illumio-collector'
+#                   system account (recommended for production).
+#                   Use --user root or --user $(logname) for quick testing.
 #
 # Usage:
-#   Bundle:    sudo ./install.sh
-#   Git clone: sudo bash scripts/install.sh
+#   Bundle:    sudo ./install.sh [--user <name>]
+#   Git clone: sudo bash scripts/install.sh [--user <name>]
 set -euo pipefail
 
 INSTALL_DIR="/opt/illumio-collector"
 CONFIG_DIR="/etc/illumio-collector"
 STATE_DIR="/var/lib/illumio-collector/state"
 LOG_DIR="/var/log/illumio-collector"
-SERVICE_USER="illumio-collector"
 SERVICE_FILE="/etc/systemd/system/illumio-collector.service"
+
+# Default service user — overridable with --user
+SERVICE_USER="illumio-collector"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "This script must be run as root." >&2
   exit 1
 fi
+
+# ---------- parse args ----------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --user) SERVICE_USER="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -35,7 +49,7 @@ else
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
 
-echo "==> Mode: ${MODE}"
+echo "==> Mode: ${MODE}  service-user: ${SERVICE_USER}"
 
 # ---------- copy application code ----------
 mkdir -p "${INSTALL_DIR}/app"
@@ -44,11 +58,23 @@ if [[ "${MODE}" == "bundle" ]]; then
   cp -r "${BUNDLE_DIR}/app/." "${INSTALL_DIR}/app/"
   cp -r "${BUNDLE_DIR}/wheels" "${INSTALL_DIR}/"
   [[ -f "${BUNDLE_DIR}/VERSION" ]] && cp "${BUNDLE_DIR}/VERSION" "${INSTALL_DIR}/"
+  # Make uninstall.sh available after install
+  [[ -f "${BUNDLE_DIR}/uninstall.sh" ]] && \
+    install -m 0755 "${BUNDLE_DIR}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 else
   for item in collector.py core sources mappers sinks mappings requirements.txt config.example.yaml; do
     cp -r "${REPO_ROOT}/${item}" "${INSTALL_DIR}/app/"
   done
+  [[ -f "${REPO_ROOT}/scripts/uninstall.sh" ]] && \
+    install -m 0755 "${REPO_ROOT}/scripts/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 fi
+
+# ---------- save install metadata ----------
+cat > "${INSTALL_DIR}/INSTALL_META" <<EOF
+service_user=${SERVICE_USER}
+install_mode=${MODE}
+installed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
 
 # ---------- Python runtime + dependencies ----------
 if [[ "${MODE}" == "bundle" ]]; then
@@ -89,13 +115,29 @@ if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
 fi
 
 # ---------- service user and state dirs ----------
-id -u "${SERVICE_USER}" >/dev/null 2>&1 || \
-  useradd --system --shell /sbin/nologin "${SERVICE_USER}"
+# Create dedicated system user only if not using an existing account
+if [[ "${SERVICE_USER}" == "illumio-collector" ]]; then
+  id -u "${SERVICE_USER}" >/dev/null 2>&1 || \
+    useradd --system --shell /sbin/nologin --no-create-home "${SERVICE_USER}"
+else
+  # Verify the specified user exists
+  id -u "${SERVICE_USER}" >/dev/null 2>&1 || {
+    echo "Error: user '${SERVICE_USER}' does not exist." >&2
+    exit 1
+  }
+fi
+
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}" "${LOG_DIR}" "${INSTALL_DIR}"
+chown -R "${SERVICE_USER}:" "${STATE_DIR}" "${LOG_DIR}" "${INSTALL_DIR}"
+chmod 700 "${CONFIG_DIR}"
+chown -R root:root "${CONFIG_DIR}"
+chmod 600 "${CONFIG_DIR}/config.yaml"
 
 # ---------- systemd unit ----------
 echo "==> Install systemd unit"
+# Determine Group — use same as User (works for both system and regular users)
+SVC_GROUP="$(id -gn "${SERVICE_USER}")"
+
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=Illumio S3 to SIEM Collector
@@ -105,7 +147,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=${SERVICE_USER}
-Group=${SERVICE_USER}
+Group=${SVC_GROUP}
 WorkingDirectory=${INSTALL_DIR}/app
 Environment=PYTHONUNBUFFERED=1
 ExecStart=${PYTHON} ${INSTALL_DIR}/app/collector.py --config ${CONFIG_DIR}/config.yaml
@@ -126,12 +168,15 @@ chmod 0644 "${SERVICE_FILE}"
 systemctl daemon-reload
 systemctl enable illumio-collector
 
-cat <<'ENDMSG'
+cat <<ENDMSG
 
 ============================================================
-Install complete.
+Install complete.  (service user: ${SERVICE_USER})
 
- 1. Edit the config:   sudo vi /etc/illumio-collector/config.yaml
+ Uninstall:   sudo ${INSTALL_DIR}/uninstall.sh
+              sudo ${INSTALL_DIR}/uninstall.sh --purge
+
+ 1. Edit the config:   sudo vi ${CONFIG_DIR}/config.yaml
  2. Start the service: sudo systemctl start illumio-collector
  3. Watch the logs:    sudo journalctl -u illumio-collector -f
 ============================================================

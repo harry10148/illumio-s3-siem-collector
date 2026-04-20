@@ -16,8 +16,15 @@ INSTALL_DIR="/opt/illumio-collector"
 CONFIG_DIR="/etc/illumio-collector"
 STATE_DIR="/var/lib/illumio-collector"
 LOG_DIR="/var/log/illumio-collector"
-SERVICE_USER="illumio-collector"
 SERVICE_FILE="/etc/systemd/system/illumio-collector.service"
+
+# Read the service user recorded at install time
+SERVICE_USER="illumio-collector"
+META="${INSTALL_DIR}/INSTALL_META"
+if [[ -f "${META}" ]]; then
+  _u="$(grep '^service_user=' "${META}" | cut -d= -f2)"
+  [[ -n "${_u}" ]] && SERVICE_USER="${_u}"
+fi
 
 PURGE=false
 for arg in "$@"; do
@@ -52,9 +59,10 @@ if [[ -d "${INSTALL_DIR}" ]]; then
   rm -rf "${INSTALL_DIR}"
 fi
 
-# --- remove service user ---
-if id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  echo "==> Removing service user ${SERVICE_USER}"
+# --- remove service user (only if it's the dedicated system account) ---
+if [[ "${SERVICE_USER}" == "illumio-collector" ]] && \
+   id -u "${SERVICE_USER}" >/dev/null 2>&1; then
+  echo "==> Removing dedicated service user ${SERVICE_USER}"
   userdel "${SERVICE_USER}"
 fi
 
