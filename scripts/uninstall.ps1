@@ -34,6 +34,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administra
     exit 1
 }
 
+# Read service account from install metadata if available
+$Meta = Join-Path $InstallDir "INSTALL_META"
+if (Test-Path $Meta) {
+    $metaContent = Get-Content $Meta | Where-Object { $_ -match '^service_account=' }
+    if ($metaContent) { Write-Host "==> Installed with account: $($metaContent -replace '^service_account=','')" }
+}
+
 $ServiceName = "IllumioCollector"
 
 # ---------- stop and remove service ----------
