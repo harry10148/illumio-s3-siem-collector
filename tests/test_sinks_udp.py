@@ -44,11 +44,19 @@ def test_udp_send_delivers_payload(udp_listener):
     sink.close()
 
 
-def test_udp_truncates_over_1024_bytes(udp_listener):
+def test_udp_truncates_over_max_bytes(udp_listener):
     host, port, received = udp_listener
-    sink = UdpSink(host=host, port=port)
-    huge = b"A" * 2000
-    sink.send(huge)
+    sink = UdpSink(host=host, port=port, max_bytes=500)
+    sink.send(b"A" * 2000)
     time.sleep(0.1)
-    assert len(received[-1]) == 1024
+    assert len(received[-1]) == 500
+    sink.close()
+
+
+def test_udp_no_truncation_when_max_bytes_zero(udp_listener):
+    host, port, received = udp_listener
+    sink = UdpSink(host=host, port=port, max_bytes=0)
+    sink.send(b"B" * 2000)
+    time.sleep(0.1)
+    assert len(received[-1]) == 2000
     sink.close()

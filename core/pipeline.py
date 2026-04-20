@@ -175,7 +175,7 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
 
         sc = pc.sink
         if sc.type == "udp":
-            sink = UdpSink(host=sc.host, port=sc.port)
+            sink = UdpSink(host=sc.host, port=sc.port, max_bytes=sc.max_bytes)
         elif sc.type == "tcp":
             sink = TcpSink(host=sc.host, port=sc.port,
                            timeout_sec=sc.timeout_sec,
