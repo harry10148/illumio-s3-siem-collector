@@ -28,7 +28,7 @@
     Leave empty for built-in accounts (LocalSystem, NetworkService).
 #>
 param(
-    [string]$InstallDir      = "C:\illumio-collector",
+    [string]$InstallDir      = "$env:ProgramFiles\illumio-collector",
     [string]$ServiceAccount  = "LocalSystem",
     [string]$ServicePassword = ""
 )
@@ -124,7 +124,7 @@ $ConfigPath = Join-Path $InstallDir "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
     $StateDir = Join-Path $InstallDir "state"
     $LogsDir  = Join-Path $InstallDir "logs"
-    (Get-Content (Join-Path $InstallDir "app\config.example.yaml") -Raw) `
+    (Get-Content (Join-Path $InstallDir "app\config.example.yaml") -Raw -Encoding UTF8) `
         -replace 'dir: \./logs\b',  "dir: $LogsDir" `
         -replace 'dir: logs\b',     "dir: $LogsDir" `
         -replace 'dir: \./state\b', "dir: $StateDir" `
@@ -156,7 +156,7 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
 
     Write-Host "==> Registering Windows service (NSSM, account: $ServiceAccount)"
     & $Nssm install $ServiceName $PythonExe `
-        "$InstallDir\app\collector.py --config $InstallDir\config.yaml"
+        "`"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
     & $Nssm set $ServiceName AppDirectory   "$InstallDir\app"
     & $Nssm set $ServiceName DisplayName    "Illumio S3 to SIEM Collector"
     & $Nssm set $ServiceName Description    "Pull Illumio PCE logs from S3 and forward to SIEM"

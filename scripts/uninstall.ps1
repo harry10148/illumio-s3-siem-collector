@@ -9,7 +9,7 @@
     resume without data loss.  Use -Purge to remove everything.
 
 .PARAMETER InstallDir
-    Installation directory (default: C:\illumio-collector)
+    Installation directory (default: C:\Program Files\illumio-collector)
 
 .PARAMETER Purge
     Also remove config.yaml and state/ (checkpoint files).
@@ -22,7 +22,7 @@
     Administrator PS> .\uninstall.ps1 -Purge
 #>
 param(
-    [string]$InstallDir = "C:\illumio-collector",
+    [string]$InstallDir = "$env:ProgramFiles\illumio-collector",
     [switch]$Purge
 )
 

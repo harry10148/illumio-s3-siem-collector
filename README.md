@@ -100,9 +100,9 @@ notepad config.yaml      # 填入 AWS 認證 + SIEM IP/port
 .\scripts\install.ps1
 
 # 6. 填好 config 後啟動
-notepad C:\illumio-collector\config.yaml
+notepad "C:\Program Files\illumio-collector\config.yaml"
 Start-Service IllumioCollector
-Get-Content C:\illumio-collector\logs\collector.log -Wait
+Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 ```
 
 > **不想裝成服務，只想直接跑：**
@@ -173,9 +173,9 @@ notepad C:\temp\config.yaml
 
 # 正式安裝
 .\install.ps1
-notepad C:\illumio-collector\config.yaml
+notepad "C:\Program Files\illumio-collector\config.yaml"
 Start-Service IllumioCollector
-Get-Content C:\illumio-collector\logs\collector.log -Wait
+Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 ```
 
 ### 安裝後目錄結構（Linux）
@@ -438,7 +438,7 @@ tail -f /var/log/illumio-collector/collector.log
 ```powershell
 # Windows
 Get-Service IllumioCollector
-Get-Content C:\illumio-collector\logs\collector.log -Wait
+Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 ```
 
 正常運作時每個 pipeline 每次 tick 會輸出一行：
@@ -488,10 +488,10 @@ sudo systemctl restart illumio-collector
 
 ```powershell
 # Windows
-notepad C:\illumio-collector\config.yaml
-C:\illumio-collector\python\python.exe `
-  C:\illumio-collector\app\collector.py `
-  --config C:\illumio-collector\config.yaml --dry-run
+notepad "C:\Program Files\illumio-collector\config.yaml"
+& "C:\Program Files\illumio-collector\python\python.exe" `
+  "C:\Program Files\illumio-collector\app\collector.py" `
+  --config "C:\Program Files\illumio-collector\config.yaml" --dry-run
 Restart-Service IllumioCollector
 ```
 
@@ -512,7 +512,7 @@ sudo rm /var/lib/illumio-collector/state/*.json
 ```powershell
 # Windows
 Stop-Service IllumioCollector
-Remove-Item C:\illumio-collector\state\audit.json
+Remove-Item "C:\Program Files\illumio-collector\state\audit.json"
 Start-Service IllumioCollector
 ```
 
@@ -577,10 +577,10 @@ sudo /opt/illumio-collector/uninstall.sh --purge
 
 ```powershell
 # 保留 config + state（預設）
-& 'C:\illumio-collector\uninstall.ps1'
+& 'C:\Program Files\illumio-collector\uninstall.ps1'
 
 # 完全移除
-& 'C:\illumio-collector\uninstall.ps1' -Purge
+& 'C:\Program Files\illumio-collector\uninstall.ps1' -Purge
 ```
 
 ---
