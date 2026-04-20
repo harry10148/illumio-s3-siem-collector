@@ -8,11 +8,11 @@
 # Nothing is written to /opt, /etc, or systemd — safe to run as any user.
 #
 # Usage:
-#   bash preflight.sh --config /path/to/config.yaml
-#   bash preflight.sh --config config.yaml --test-s3
+#   bash preflight.sh [--config /path/to/config.yaml] [--test-s3]
+#   (bundle mode: --config is optional, defaults to app/config.example.yaml)
 #
 # Options:
-#   --config <path>   Path to config.yaml (required)
+#   --config <path>   Path to config.yaml (optional; auto-detected if omitted)
 #   --test-s3         Also verify S3 connectivity using credentials in config
 set -euo pipefail
 
@@ -33,13 +33,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${CONFIG_PATH}" ]]; then
-  echo "Error: --config <path> is required." >&2
-  echo "Usage: bash preflight.sh --config /path/to/config.yaml [--test-s3]" >&2
-  exit 1
-fi
-[[ ! -f "${CONFIG_PATH}" ]] && { echo "Error: config not found: ${CONFIG_PATH}" >&2; exit 1; }
-
 # ---------- detect mode ----------
 if [[ -f "${SCRIPT_DIR}/python-runtime.tar.gz" ]]; then
   MODE="bundle"
@@ -52,6 +45,22 @@ else
 fi
 
 echo "==> Mode: ${MODE}"
+
+# ---------- resolve config ----------
+if [[ -z "${CONFIG_PATH}" ]]; then
+  if [[ "${MODE}" == "bundle" ]]; then
+    CONFIG_PATH="${APP_DIR}/config.example.yaml"
+  else
+    if   [[ -f "${REPO_ROOT}/config.yaml"         ]]; then CONFIG_PATH="${REPO_ROOT}/config.yaml"
+    elif [[ -f "${REPO_ROOT}/config.example.yaml" ]]; then CONFIG_PATH="${REPO_ROOT}/config.example.yaml"
+    fi
+  fi
+  [[ -n "${CONFIG_PATH}" ]] && echo "==> --config not specified; using ${CONFIG_PATH}"
+fi
+if [[ -z "${CONFIG_PATH}" || ! -f "${CONFIG_PATH}" ]]; then
+  echo "Error: config not found: '${CONFIG_PATH}'. Use --config <path>." >&2
+  exit 1
+fi
 
 TMPDIR="$(mktemp -d)"
 cleanup() { rm -rf "${TMPDIR}"; }

@@ -11,23 +11,25 @@
     Safe to run without Administrator privileges.
 
 .PARAMETER Config
-    Path to config.yaml (required).
+    Path to config.yaml.
+    Optional in bundle mode — defaults to app\config.example.yaml if omitted.
+    In git-clone mode defaults to config.yaml, then config.example.yaml at repo root.
 
 .PARAMETER TestS3
     Also verify S3 connectivity using credentials in config.
 
 .EXAMPLE
-    # Bundle — config validation only
-    .\preflight.ps1 -Config C:\temp\config.yaml
+    # Bundle — quick check with bundled example config
+    .\preflight.ps1
 
-    # Bundle — config + S3
+    # Bundle — use your own config + S3 test
     .\preflight.ps1 -Config C:\temp\config.yaml -TestS3
 
     # Git clone (from repo root)
     .\scripts\preflight.ps1 -Config config.yaml -TestS3
 #>
 param(
-    [Parameter(Mandatory)][string]$Config,
+    [string]$Config = "",
     [switch]$TestS3
 )
 
@@ -35,24 +37,37 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = $PSScriptRoot
 
-# ---------- basic checks ----------
-if (-not (Test-Path $Config)) {
-    Write-Error "Config file not found: $Config"
-    exit 1
-}
-
 # ---------- detect mode ----------
 $RuntimeTar = Join-Path $ScriptDir "python-runtime.tar.gz"
 if (Test-Path $RuntimeTar) {
-    $Mode    = "bundle"
-    $AppDir  = Join-Path $ScriptDir "app"
+    $Mode     = "bundle"
+    $AppDir   = Join-Path $ScriptDir "app"
 } else {
-    $Mode    = "gitclone"
+    $Mode     = "gitclone"
     $RepoRoot = Split-Path -Parent $ScriptDir
-    $AppDir  = $RepoRoot
+    $AppDir   = $RepoRoot
 }
 
 Write-Host "==> Mode: $Mode"
+
+# ---------- resolve config ----------
+if (-not $Config) {
+    if ($Mode -eq "bundle") {
+        $Config = Join-Path $AppDir "config.example.yaml"
+    } else {
+        $try1 = Join-Path $RepoRoot "config.yaml"
+        $try2 = Join-Path $RepoRoot "config.example.yaml"
+        if    (Test-Path $try1) { $Config = $try1 }
+        elseif (Test-Path $try2) { $Config = $try2 }
+    }
+    if ($Config) {
+        Write-Host "==> -Config not specified; using $Config"
+    }
+}
+if (-not $Config -or -not (Test-Path $Config)) {
+    Write-Error "Config file not found: '$Config'. Use -Config <path>."
+    exit 1
+}
 
 $TempDir = Join-Path $env:TEMP ("illumio-preflight-" + [guid]::NewGuid().ToString("N").Substring(0,8))
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
