@@ -22,7 +22,9 @@ aws:
   profile: null                    # AWS CLI profile 名稱，null = 不使用
   access_key: "AKIA..."            # Access Key ID（原廠文件提供）
   secret_key: "..."                # Secret Access Key（原廠文件提供）
-  region: "ap-northeast-1"        # S3 bucket 所在 region（不確定時用 s3_log_checker.py 確認）
+  # region 可以不填——boto3 會自動偵測並跟著 S3 redirect 到正確 region。
+  # 若連線出現 AuthorizationHeaderMalformed 錯誤才需要填（格式如 "ap-northeast-1"）。
+  region: null
 
 # ── S3 來源 ───────────────────────────────────────────────
 # fqdn 和 org_id 是 S3 路徑的一部分：{fqdn}/org_id={org_id}/auditable/...

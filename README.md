@@ -36,9 +36,9 @@ bucket, convert them to Syslog-JSON / CEF / JSON, and forward them to a SIEM
 
 ```yaml
 aws:
-  access_key: "AKIA..."           # AWS Access Key ID
-  secret_key: "..."               # AWS Secret Access Key
-  region: "ap-northeast-1"        # S3 bucket 所在 region
+  access_key: "AKIA..."           # AWS Access Key ID（原廠文件提供）
+  secret_key: "..."               # AWS Secret Access Key（原廠文件提供）
+  # region 不需要填，boto3 會自動偵測
 
 source:
   bucket: "illumio-flow-..."      # S3 bucket 名稱
@@ -94,10 +94,11 @@ python collector.py --config config.yaml
 |---|---|---|
 | `access_key` | AWS Access Key ID | `"AKIA..."` |
 | `secret_key` | AWS Secret Access Key | `"abc123..."` |
-| `region` | S3 bucket region | `"ap-northeast-1"` |
+| `region` | S3 bucket region（**選填**，可填 `null`） | `"ap-northeast-1"` 或 `null` |
 | `profile` | 使用 AWS CLI profile（與 key/secret 二選一） | `"my-profile"` |
 
-> **如何找 region？** bucket 名稱通常含地區提示（`ap-` = Asia Pacific）。若不確定，用 `python s3_log_checker.py` 驗證。
+> **region 可以不填。** boto3 會自動偵測，S3 redirect 機制會把請求導到正確的 region。
+> 只有在連線出現 `AuthorizationHeaderMalformed` 錯誤時，才需要明確填入（格式如 `"ap-northeast-1"`）。
 
 ### `source` 區塊
 

@@ -24,7 +24,7 @@ class AwsConfig(BaseModel):
     profile: Optional[str] = None
     access_key: Optional[str] = None
     secret_key: Optional[str] = None
-    region: str
+    region: Optional[str] = None
 
     @model_validator(mode="after")
     def _key_pair(self):
