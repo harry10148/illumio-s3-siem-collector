@@ -73,24 +73,55 @@ cd C:\illumio-bundle
 
 #### Linux
 
+前提：目標主機需要 `python3`、`python3-venv`、`git`。
+
 ```bash
+# 1. Clone 專案
 git clone <repo_url>
 cd illumio_s3_collector
-sudo bash scripts/install.sh
-```
 
-腳本會自動建立 Python venv 並用 pip 安裝依賴。
+# 2. 準備 config
+cp config.example.yaml config.yaml
+vi config.yaml    # 填入 AWS 認證 + FortiSIEM IP/port
+
+# 3. Preflight 測試（不需要 sudo）
+bash scripts/preflight.sh --config config.yaml --test-s3
+# → 看到 PASS 再繼續
+
+# 4. 正式安裝（建立 venv + systemd service）
+sudo bash scripts/install.sh
+
+# 5. 啟動
+sudo systemctl start illumio-collector
+sudo journalctl -u illumio-collector -f
+```
 
 #### Windows
 
+前提：需要 Python 3.x 已安裝且在 PATH 中（`python --version` 可執行）、`git`。
+
 ```powershell
+# 1. Clone 專案
 git clone <repo_url>
 cd illumio_s3_collector
-# Administrator PowerShell
+
+# 2. 準備 config
+Copy-Item config.example.yaml config.yaml
+notepad config.yaml    # 填入 AWS 認證 + FortiSIEM IP/port
+
+# 3. Preflight 測試（不需要 Administrator）
+.\scripts\preflight.ps1 -Config config.yaml -TestS3
+# → 看到 PASS 再繼續
+
+# 4. 正式安裝（建立 venv + Windows service）— 需要 Administrator PowerShell
 .\scripts\install.ps1
+
+# 5. 啟動
+Start-Service IllumioCollector
+Get-Content C:\illumio-collector\logs\collector.log -Wait
 ```
 
-腳本會自動建立 Python venv 並用 pip 安裝依賴（需要 Python 3.x 已安裝且在 PATH 中）。
+> **更新（git clone 模式）：** `git pull` 後重新執行 `install.sh` / `install.ps1` 即可覆蓋新程式碼，config 和 checkpoint 不受影響。
 
 ---
 
@@ -99,40 +130,36 @@ cd illumio_s3_collector
 建議在執行 `install.sh` / `install.ps1` 前先跑一次 preflight，確認 Python、依賴套件、config 語法、S3 連線都沒問題。
 全程不需要 sudo / Administrator，不寫入任何系統路徑，完成後自動清掉 temp。
 
+兩種模式都支援（自動偵測）：
+- **bundle 模式**：從 bundle 目錄執行，使用 bundle 內附的 Python + wheels
+- **git clone 模式**：從 repo 的 `scripts/` 目錄執行，使用系統 Python + pip
+
 #### Linux
 
 ```bash
-# 解壓 bundle（如果還沒解壓）
+# ---- bundle 模式 ----
 tar xzf illumio-collector-linux-x86_64-v1.0.tar.gz
 cd bundle
-
-# 先準備好 config（從 example 複製後填入認證）
-cp app/config.example.yaml /tmp/config.yaml
-vi /tmp/config.yaml
-
-# 只驗證 config 語法
-bash preflight.sh --config /tmp/config.yaml
-
-# 同時測試 S3 連線（推薦）
+cp app/config.example.yaml /tmp/config.yaml && vi /tmp/config.yaml
 bash preflight.sh --config /tmp/config.yaml --test-s3
+
+# ---- git clone 模式 ----
+cd illumio_s3_collector
+bash scripts/preflight.sh --config config.yaml --test-s3
 ```
 
 #### Windows
 
 ```powershell
-# 解壓 bundle（如果還沒解壓）
+# ---- bundle 模式 ----
 Expand-Archive illumio-collector-windows-x86_64-v1.0.zip C:\illumio-bundle
 cd C:\illumio-bundle
-
-# 先準備好 config
-Copy-Item app\config.example.yaml C:\temp\config.yaml
-notepad C:\temp\config.yaml
-
-# 只驗證 config 語法
-.\preflight.ps1 -Config C:\temp\config.yaml
-
-# 同時測試 S3 連線（推薦）
+Copy-Item app\config.example.yaml C:\temp\config.yaml; notepad C:\temp\config.yaml
 .\preflight.ps1 -Config C:\temp\config.yaml -TestS3
+
+# ---- git clone 模式 ----
+cd illumio_s3_collector
+.\scripts\preflight.ps1 -Config config.yaml -TestS3
 ```
 
 輸出結尾看到 `PASS` 就可以安心執行 `sudo ./install.sh` / `.\install.ps1`。
