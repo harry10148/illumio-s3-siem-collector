@@ -301,22 +301,106 @@ python collector.py --config config.yaml
 
 #### `sink.type` — 傳輸方式
 
-| 值 | 說明 | 必填參數 |
+四種 type 的選擇指引：
+
+| type | 何時用 | SIEM 預設 port |
 |---|---|---|
-| `tls` | TCP + TLS（**推薦**） | `host`, `port` |
-| `tcp` | 純 TCP（明文） | `host`, `port` |
-| `udp` | UDP（無連線確認） | `host`, `port` |
-| `https` | HTTPS batch POST | `url` |
+| `tls` | **推薦**。加密傳輸，防竊聽，適合跨網段 | 6514 |
+| `tcp` | 內部網路，不需加密，SIEM 不支援 TLS 時 | 1470 |
+| `udp` | 同網段、對效能要求高、可接受掉包 | 514 |
+| `https` | SIEM 有 HTTP rawupload API（如 Splunk HEC、Elastic） | 443 |
 
-SIEM 預設監聽 port：TLS = **6514**，TCP = **1470**，UDP = **514**。
+---
 
-#### `mapper.format` — 輸出格式
+**`type: tls`** — TCP + TLS 加密（推薦）
 
-| 值 | 說明 | 適用場景 |
+```yaml
+sink:
+  type: tls
+  host: "siem.example.com"   # 必填：SIEM IP 或 hostname
+  port: 6514                 # 必填：SIEM 的 TLS syslog port
+  tls:
+    verify: true             # 預設 true；自簽憑證時改 false
+    ca_file: null            # 自訂 CA 路徑（null = 使用系統 CA）
+  timeout_sec: 10            # 連線 / 傳送逾時（秒）
+  max_retries: 3             # 失敗最多重試幾次
+  retry_backoff_sec:         # 每次重試等待秒數
+    - 1
+    - 2
+    - 4
+```
+
+---
+
+**`type: tcp`** — 純 TCP 明文
+
+```yaml
+sink:
+  type: tcp
+  host: "192.168.1.50"
+  port: 1470
+  timeout_sec: 10
+  max_retries: 3
+  retry_backoff_sec: [1, 2, 4]
+```
+
+---
+
+**`type: udp`** — UDP（fire-and-forget）
+
+```yaml
+sink:
+  type: udp
+  host: "192.168.1.50"
+  port: 514
+  max_bytes: 8192            # 單則最大 bytes；超過就截斷並警告
+                             # 0 = 不限制（不建議）
+                             # 1472 = Ethernet 不分片上限
+```
+
+> UDP 沒有重試和逾時設定（無連線）。如果 log 中出現 `truncating` 警告，建議改用 `tcp` 或 `tls`。
+
+---
+
+**`type: https`** — HTTPS batch POST（NDJSON）
+
+```yaml
+sink:
+  type: https
+  url: "https://siem.example.com/rawupload?vendor=Illumio&model=PCE"  # 必填
+  batch_size: 100            # 累積幾筆再一次送出（預設 100）
+  tls:
+    verify: true             # false = 停用憑證驗證（自簽憑證用）
+  timeout_sec: 10
+  max_retries: 3
+  retry_backoff_sec: [1, 2, 4]
+```
+
+> HTTPS sink 用 NDJSON 格式（每行一筆 JSON）batch POST，適合 Splunk HEC 或 Elastic Bulk API。
+
+#### `mapper` — 輸出格式設定
+
+```yaml
+mapper:
+  format: syslog_json        # 必填：syslog_json / cef / json
+  flatten: true              # 展平巢狀 JSON（SIEM 需要 true）
+  flatten_separator: "_"     # 巢狀路徑的分隔符（預設底線）
+  flatten_max_depth: 10      # 最大展平層數
+  array_strategy: stringify  # 陣列處理：stringify / first / skip
+  mapping_file: null         # CEF 格式必填；其餘可省略
+```
+
+| `format` | 輸出樣式 | 適用場景 |
 |---|---|---|
 | `syslog_json` | RFC5424 header + 展平 JSON body | SIEM（**推薦**） |
-| `cef` | CEF 格式，需 `mapping_file` | 支援 CEF 的 SIEM |
-| `json` | 純 JSON | Splunk / Elastic HTTP receiver |
+| `cef` | CEF 格式，需搭配 `mapping_file` | 支援 CEF 的 SIEM（ArcSight 等） |
+| `json` | 純 JSON（無 syslog header） | Splunk HEC / Elastic（配合 `https` sink） |
+
+| `array_strategy` | 說明 |
+|---|---|
+| `stringify` | 陣列轉字串 `"[a,b,c]"`（預設） |
+| `first` | 只取第一個元素 |
+| `skip` | 完全略過含陣列的欄位 |
 
 #### `filter.expression` — 事件過濾
 
