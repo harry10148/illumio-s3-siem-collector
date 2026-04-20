@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Build offline install bundle for Linux x86_64.
+# Run on a host with internet + Python 3.11 + pip.
+set -euo pipefail
+
+VERSION="${VERSION:-1.0}"
+PBS_TAG="${PBS_TAG:-20240415}"
+PY_VER="${PY_VER:-3.11.9}"
+OUT_DIR="${OUT_DIR:-$(pwd)/dist}"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="$(mktemp -d)"
+BUNDLE="${BUILD_DIR}/bundle"
+
+mkdir -p "${BUNDLE}/app" "${BUNDLE}/wheels" "${BUNDLE}/systemd" "${OUT_DIR}"
+
+echo "==> Downloading python-build-standalone cpython-${PY_VER}+${PBS_TAG}"
+curl -fL -o "${BUNDLE}/python-runtime.tar.gz" \
+  "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PY_VER}+${PBS_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+
+echo "==> Downloading wheels for manylinux2014_x86_64 / py3.11"
+python3.11 -m pip download \
+  --only-binary=:all: \
+  --platform manylinux2014_x86_64 \
+  --python-version 3.11 --implementation cp --abi cp311 \
+  -d "${BUNDLE}/wheels" \
+  -r "${REPO_ROOT}/requirements.txt"
+
+echo "==> Copying application code"
+cp -r \
+  "${REPO_ROOT}/collector.py" \
+  "${REPO_ROOT}/core" "${REPO_ROOT}/sources" "${REPO_ROOT}/mappers" \
+  "${REPO_ROOT}/sinks" "${REPO_ROOT}/mappings" \
+  "${REPO_ROOT}/fortisiem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/doc" \
+  "${REPO_ROOT}/requirements.txt" \
+  "${REPO_ROOT}/config.example.yaml" \
+  "${REPO_ROOT}/README.md" \
+  "${BUNDLE}/app/"
+
+cp "${REPO_ROOT}/docs/systemd/illumio-collector.service" "${BUNDLE}/systemd/"
+cp "${REPO_ROOT}/scripts/install.sh" "${BUNDLE}/install.sh"
+chmod +x "${BUNDLE}/install.sh"
+
+cat > "${BUNDLE}/VERSION" <<'EOF'
+illumio-s3-siem-collector v${VERSION}
+built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+host:  $(uname -a)
+python: cpython-${PY_VER}+${PBS_TAG} (x86_64 linux gnu)
+EOF
+
+TARBALL="${OUT_DIR}/illumio-collector-linux-x86_64-v${VERSION}.tar.gz"
+tar -C "${BUILD_DIR}" -czf "${TARBALL}" bundle
+(cd "${OUT_DIR}" && sha256sum "$(basename "${TARBALL}")") > "${OUT_DIR}/SHA256SUMS-linux"
+
+echo "==> Done: ${TARBALL}"
+rm -rf "${BUILD_DIR}"
