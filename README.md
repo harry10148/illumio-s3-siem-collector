@@ -178,16 +178,89 @@ Start-Service IllumioCollector
 Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 ```
 
-### 安裝後目錄結構（Linux）
+### 安裝後建立的資源
 
-| 路徑 | 內容 |
-|---|---|
-| `/opt/illumio-collector/app/` | 程式碼 |
-| `/opt/illumio-collector/python/` | Python 3.11 runtime（bundle 模式） |
-| `/opt/illumio-collector/venv/` | Python venv（git clone 模式） |
-| `/etc/illumio-collector/config.yaml` | 設定檔（**需手動填入認證**） |
-| `/var/lib/illumio-collector/state/` | Checkpoint 檔 |
-| `/var/log/illumio-collector/` | Log 檔 |
+#### Linux
+
+**目錄與檔案**
+
+| 路徑 | bundle | git clone | 說明 |
+|---|:---:|:---:|---|
+| `/opt/illumio-collector/app/` | ✅ | ✅ | 程式碼（collector.py、core/、sinks/ 等） |
+| `/opt/illumio-collector/python/` | ✅ | — | Python 3.11 standalone runtime |
+| `/opt/illumio-collector/venv/` | — | ✅ | Python virtualenv |
+| `/opt/illumio-collector/wheels/` | ✅ | — | pip wheel 快取（安裝完可刪） |
+| `/opt/illumio-collector/uninstall.sh` | ✅ | ✅ | 解除安裝腳本 |
+| `/opt/illumio-collector/INSTALL_META` | ✅ | ✅ | 安裝時間、模式、服務帳號紀錄 |
+| `/opt/illumio-collector/VERSION` | ✅ | — | bundle 版本資訊 |
+| `/etc/illumio-collector/config.yaml` | ✅ | ✅ | **主設定檔（需填入認證）** 權限 600 |
+| `/var/lib/illumio-collector/state/` | ✅ | ✅ | Checkpoint 檔（每個 pipeline 一個 JSON） |
+| `/var/log/illumio-collector/` | ✅ | ✅ | Log 檔（含 rotate） |
+| `/etc/systemd/system/illumio-collector.service` | ✅ | ✅ | systemd unit 檔 |
+
+**系統服務與使用者**
+
+```
+服務名稱：illumio-collector
+服務狀態：enabled（開機自動啟動，未啟動服務本身）
+服務帳號：illumio-collector（系統帳號，no shell, no home）
+          或 --user 指定的現有帳號
+```
+
+```bash
+# 確認服務狀態
+systemctl status illumio-collector
+
+# 確認系統帳號
+id illumio-collector
+
+# 查看 systemd unit 內容
+cat /etc/systemd/system/illumio-collector.service
+```
+
+---
+
+#### Windows
+
+**目錄與檔案**
+
+預設安裝路徑：`C:\Program Files\illumio-collector\`
+
+| 路徑 | bundle | git clone | 說明 |
+|---|:---:|:---:|---|
+| `...\app\` | ✅ | ✅ | 程式碼 |
+| `...\python\` | ✅ | — | Python 3.11 standalone runtime |
+| `...\venv\` | — | ✅ | Python virtualenv |
+| `...\wheels\` | ✅ | — | pip wheel 快取 |
+| `...\nssm\nssm-2.24\win64\nssm.exe` | ✅* | — | NSSM（若下載成功） |
+| `...\uninstall.ps1` | ✅ | ✅ | 解除安裝腳本 |
+| `...\INSTALL_META` | ✅ | ✅ | 安裝時間、模式、服務帳號紀錄 |
+| `...\VERSION` | ✅ | — | bundle 版本資訊 |
+| `...\config.yaml` | ✅ | ✅ | **主設定檔（需填入認證）** |
+| `...\state\` | ✅ | ✅ | Checkpoint 檔 |
+| `...\logs\` | ✅ | ✅ | Log 檔 |
+| `...\logs\collector.log` | ✅ | ✅ | Python logging 輸出 |
+| `...\logs\nssm-stdout.log` | ✅* | — | stdout（NSSM 模式） |
+| `...\logs\nssm-stderr.log` | ✅* | — | stderr（NSSM 模式） |
+
+\* NSSM 相關項目只在 NSSM 下載成功時存在；否則使用 New-Service fallback。
+
+**Windows 服務**
+
+```
+服務名稱（Name）：IllumioCollector
+顯示名稱：Illumio S3 to SIEM Collector
+啟動類型：Automatic（開機自動啟動，未啟動服務本身）
+服務帳號：LocalSystem（預設）或 -ServiceAccount 指定的帳號
+```
+
+```powershell
+# 確認服務已建立
+Get-Service IllumioCollector
+
+# 查看詳細資訊
+Get-Service IllumioCollector | Select-Object *
+```
 
 ---
 
