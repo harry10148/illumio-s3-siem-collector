@@ -138,3 +138,74 @@ def test_invalid_json_line_skipped(tmp_state_dir):
     )
     p.tick()
     assert len(sink.sent) == 2
+
+
+# ---------------------------------------------------------------------------
+# integration: real Pipeline + moto-S3 + in-memory sink
+# ---------------------------------------------------------------------------
+import gzip as _gzip
+import json as _json
+from datetime import datetime as _dt, timezone as _tz
+
+import boto3 as _boto3
+import pytest as _pytest
+from moto import mock_aws as _mock_aws
+
+from mappers.syslog_json import SyslogJsonMapper as _SyslogJson
+from sinks.base import Sink as _Sink
+from sources.s3_source import S3Source as _S3Source
+
+
+class _MemorySink(_Sink):
+    def __init__(self):
+        self.sent = []
+
+    def send(self, w):
+        self.sent.append(w)
+        return True
+
+    def close(self):
+        pass
+
+
+@_pytest.mark.integration
+def test_end_to_end_with_moto(tmp_state_dir):
+    with _mock_aws():
+        s3 = _boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        base = "f.example.com/org_id=1/auditable/"
+        events = [
+            {"timestamp": "2026-04-20T10:00:00Z", "pce_fqdn": "f.example.com",
+             "href": "/orgs/1/events/a"},
+            {"timestamp": "2026-04-20T10:00:01Z", "pce_fqdn": "f.example.com",
+             "href": "/orgs/1/events/b",
+             "created_by": {"agent": {"hostname": "h1"}}},
+        ]
+        body = _gzip.compress("\n".join(_json.dumps(e) for e in events).encode())
+        s3.put_object(Bucket="test-bucket", Key=base + "20260420_a.jsonl.gz", Body=body)
+
+        source = _S3Source(bucket="test-bucket", fqdn="f.example.com", org_id="1",
+                           s3_client=s3,
+                           today=_dt(2026, 4, 20, 23, 59, tzinfo=_tz.utc))
+        mapper = _SyslogJson(log_type="auditable")
+        sink = _MemorySink()
+        store = CheckpointStore(tmp_state_dir)
+
+        p = Pipeline(
+            name="e2e", log_type="auditable",
+            source=source, mapper=mapper, sink=sink,
+            checkpoint_store=store, filter_fn=None,
+            max_files_per_tick=100,
+        )
+        p.tick()
+
+        assert len(sink.sent) == 2
+        assert b"illumio-pce audit auditable" in sink.sent[0]
+        assert b"created_by_agent_hostname" in sink.sent[1]
+
+        cp = store.load("e2e")
+        assert cp.last_key == base + "20260420_a.jsonl.gz"
+
+        sink.sent.clear()
+        p.tick()
+        assert sink.sent == []
