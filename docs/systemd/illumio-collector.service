@@ -1,0 +1,24 @@
+[Unit]
+Description=Illumio S3 to SIEM Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=illumio-collector
+Group=illumio-collector
+WorkingDirectory=/opt/illumio-collector/app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/illumio-collector/python/bin/python3 /opt/illumio-collector/app/collector.py --config /etc/illumio-collector/config.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/illumio-collector /var/log/illumio-collector
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
