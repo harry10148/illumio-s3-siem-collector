@@ -82,7 +82,7 @@ cd illumio_s3_collector
 
 # 2. 準備 config
 cp config.example.yaml config.yaml
-vi config.yaml    # 填入 AWS 認證 + FortiSIEM IP/port
+vi config.yaml    # 填入 AWS 認證 + SIEM IP/port
 
 # 3. Preflight 測試（不需要 sudo）
 bash scripts/preflight.sh --config config.yaml --test-s3
@@ -107,7 +107,7 @@ cd illumio_s3_collector
 
 # 2. 準備 config
 Copy-Item config.example.yaml config.yaml
-notepad config.yaml    # 填入 AWS 認證 + FortiSIEM IP/port
+notepad config.yaml    # 填入 AWS 認證 + SIEM IP/port
 
 # 3. Preflight 測試（不需要 Administrator）
 .\scripts\preflight.ps1 -Config config.yaml -TestS3
@@ -171,7 +171,7 @@ cd illumio_s3_collector
 #### Linux
 
 ```bash
-# 填入 AWS 認證 + FortiSIEM IP/port
+# 填入 AWS 認證 + SIEM IP/port
 sudo vi /etc/illumio-collector/config.yaml
 
 # 驗證設定
@@ -359,7 +359,7 @@ sudo rm /var/lib/illumio-collector/state/*.json
 sudo systemctl start illumio-collector
 ```
 
-> ⚠️ FortiSIEM 會收到重複事件，請確認 SIEM 端的 dedup 規則已啟用。
+> ⚠️ SIEM 會收到重複事件，請確認 SIEM 端的 dedup 規則已啟用。
 
 ---
 
@@ -415,7 +415,7 @@ sudo journalctl -u illumio-collector --no-pager | tail -30
 
 常見原因：
 - `config.yaml` 語法錯誤 → 用 `--dry-run` 驗證
-- FortiSIEM host/port 無法連線 → 用 `nc -zv <host> <port>` 測試
+- SIEM host/port 無法連線 → 用 `nc -zv <host> <port>` 測試
 - S3 認證失敗 → 用 `s3_log_checker.py` 驗證（見下方）
 
 ### S3 連線測試
@@ -439,12 +439,12 @@ sudo /opt/illumio-collector/python/bin/python3 \
   --once <pipeline-name>
 ```
 
-### 送出的事件 FortiSIEM 沒收到
+### 送出的事件 SIEM 沒收到
 
-1. 確認 FortiSIEM 的 syslog receiver 已啟用（Admin → Device Support → Syslog）
+1. 確認 SIEM 的 syslog receiver 已啟用（Admin → Device Support → Syslog）
 2. 確認 port 和協定正確（TLS=6514, TCP=1470, UDP=514）
 3. TLS sink 出現憑證錯誤時，暫時改 `tls.verify: false` 確認連通性
-4. 確認 FortiSIEM custom parser 已匯入並啟用（見 `fortisiem_parser/README.md`）
+4. 確認 SIEM custom parser 已匯入並啟用（見 `siem_parser/README.md`）
 
 ### 事件量為 0（sent=0）
 

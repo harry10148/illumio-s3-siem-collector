@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  FortiSIEM Custom Parser for Illumio PCE Auditable events (syslog_json format)
+  SIEM Custom Parser for Illumio PCE Auditable events (syslog_json format)
   Import via: Admin > Device Support > Parsers > New > Upload XML
 -->
 <patternDefinitions>

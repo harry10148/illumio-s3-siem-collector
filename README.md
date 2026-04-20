@@ -2,13 +2,13 @@
 
 Pull Illumio PCE logs (auditable events, traffic summaries) from an AWS S3
 bucket, convert them to Syslog-JSON / CEF / JSON, and forward them to a SIEM
-(designed for FortiSIEM) over UDP / TCP / TLS / HTTPS.
+(designed for SIEM) over UDP / TCP / TLS / HTTPS.
 
 - Multi-pipeline: each log type can go to a different destination with its
   own poll interval, format, and filter.
 - Built-in scheduler (APScheduler) — no external cron / Task Scheduler.
 - Checkpoint via atomic JSON file; resumes after restart with at-least-once
-  semantics (SIEM must tolerate duplicates; FortiSIEM rule-based dedup works).
+  semantics (SIEM must tolerate duplicates; SIEM rule-based dedup works).
 - Offline-installable bundles for Linux and Windows: **target needs no
   Python, no pip, no internet**.
 
@@ -52,7 +52,7 @@ pipelines:
     mapper: { format: syslog_json }
     sink:
       type: tls
-      host: "fortisiem.example.com"
+      host: "siem.example.com"
       port: 6514
 
   - name: "blocked"
@@ -61,7 +61,7 @@ pipelines:
     mapper: { format: syslog_json }
     sink:
       type: tls
-      host: "fortisiem.example.com"
+      host: "siem.example.com"
       port: 6514
 ```
 
@@ -78,7 +78,7 @@ python collector.py --config config.yaml --dry-run
 python collector.py --config config.yaml --once audit
 ```
 
-確認 FortiSIEM 收到訊息後再啟動正式排程：
+確認 SIEM 收到訊息後再啟動正式排程：
 
 ```bash
 python collector.py --config config.yaml
@@ -133,7 +133,7 @@ python collector.py --config config.yaml
 | `max_files_per_tick` | | `1000` | 每次最多處理幾個 S3 檔案（防止單次 tick 太久） |
 | `filter.expression` | | — | 事件過濾條件（見下方） |
 | `mapper.format` | | `syslog_json` | 輸出格式（見下方） |
-| `mapper.flatten` | | `true` | 是否展平巢狀 JSON（FortiSIEM 需要 true） |
+| `mapper.flatten` | | `true` | 是否展平巢狀 JSON（SIEM 需要 true） |
 | `sink.type` | ✅ | — | 傳輸方式（見下方） |
 
 #### `log_type` — 對應 S3 路徑與資料內容
@@ -155,13 +155,13 @@ python collector.py --config config.yaml
 | `udp` | UDP（無連線確認） | `host`, `port` | 每則 ≤ 1024 bytes |
 | `https` | HTTPS batch POST | `url` | NDJSON，批次送出 |
 
-FortiSIEM 預設監聽 port：TLS = **6514**，TCP = **1470**，UDP = **514**。
+SIEM 預設監聽 port：TLS = **6514**，TCP = **1470**，UDP = **514**。
 
 #### `mapper.format` — 輸出格式
 
 | 值 | 說明 | 適用場景 |
 |---|---|---|
-| `syslog_json` | RFC5424 header + 展平 JSON body | FortiSIEM（**推薦**） |
+| `syslog_json` | RFC5424 header + 展平 JSON body | SIEM（**推薦**） |
 | `cef` | CEF 格式，需 `mapping_file` | 其他支援 CEF 的 SIEM |
 | `json` | 純 JSON，適合 HTTPS sink | Splunk / Elastic HTTP receiver |
 
@@ -326,9 +326,9 @@ python collector.py --config config.yaml --once <pipeline-name>
 
 ---
 
-## FortiSIEM 設定
+## SIEM 設定
 
-Import parsers from `fortisiem_parser/`. See `fortisiem_parser/README.md`.
+Import parsers from `siem_parser/`. See `siem_parser/README.md`.
 
 ---
 

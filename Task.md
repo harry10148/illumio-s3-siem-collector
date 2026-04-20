@@ -11,13 +11,13 @@
 - [x] Explore existing `s3_log_checker.py`
 - [x] Read Illumio docs (S3 collection mechanisms, traffic log format)
 - [x] Probe real S3 bucket — verify layout assumptions
-- [x] Research FortiSIEM syslog & HTTP receiver constraints
+- [x] Research SIEM syslog & HTTP receiver constraints
 - [x] Brainstorm design with user (multi-round)
 - [x] Write design spec
 - [x] User approves design spec
 - [x] Write implementation plan (29 tasks)
 - [x] Execute implementation plan (Tasks 1–29) — branch `feature/implement`, tag `v1.0`
-- [x] FortiSIEM parser XML templates (`fortisiem_parser/IllumioPCE_Auditable.xml`, `IllumioPCE_Summaries.xml`)
+- [x] SIEM parser XML templates (`siem_parser/IllumioPCE_Auditable.xml`, `IllumioPCE_Summaries.xml`)
 - [x] Production smoke test — real S3 bucket, RFC5424 syslog events confirmed at UDP 5514
 
 ---
@@ -26,8 +26,8 @@
 
 - Merge `feature/implement` → `master`
 - Deploy to customer (offline bundle for Linux or Windows)
-- Import FortiSIEM parsers (`fortisiem_parser/`) at customer site
-- Edit `/etc/illumio-collector/config.yaml` with real credentials + FortiSIEM IP/port
+- Import SIEM parsers (`siem_parser/`) at customer site
+- Edit `/etc/illumio-collector/config.yaml` with real credentials + SIEM IP/port
 - Start service: `sudo systemctl start illumio-collector`
 
 ---

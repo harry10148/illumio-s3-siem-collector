@@ -1,4 +1,4 @@
-"""Flatten nested dict so downstream parsers (FortiSIEM basic JSON parser) can
+"""Flatten nested dict so downstream parsers (SIEM basic JSON parser) can
 key-value extract without understanding nested objects."""
 from __future__ import annotations
 

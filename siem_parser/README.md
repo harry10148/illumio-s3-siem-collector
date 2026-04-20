@@ -1,6 +1,6 @@
-# FortiSIEM Custom Parsers for Illumio PCE
+# SIEM Custom Parsers for Illumio PCE
 
-These XML parsers tell FortiSIEM how to extract structured fields from the
+These XML parsers tell the SIEM how to extract structured fields from the
 syslog-wrapped JSON messages produced by `illumio_s3_collector`.
 
 ## Files
@@ -12,7 +12,7 @@ syslog-wrapped JSON messages produced by `illumio_s3_collector`.
 
 ## Install
 
-1. FortiSIEM GUI -> Admin -> Device Support -> Parsers
+1. SIEM GUI -> Admin -> Device Support -> Parsers
 2. Click **New** -> upload the XML
 3. Set **Enabled = Yes**
 4. Click **Apply** to push to collectors

@@ -1,4 +1,4 @@
-"""HTTPS sink: batch NDJSON POST to FortiSIEM rawupload or similar endpoint."""
+"""HTTPS sink: batch NDJSON POST to SIEM rawupload or similar endpoint."""
 from __future__ import annotations
 
 import logging

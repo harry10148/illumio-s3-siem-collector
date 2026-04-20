@@ -1,4 +1,4 @@
-"""TLS-wrapped TCP syslog sink (FortiSIEM default port 6514)."""
+"""TLS-wrapped TCP syslog sink (SIEM default port 6514)."""
 from __future__ import annotations
 
 import socket

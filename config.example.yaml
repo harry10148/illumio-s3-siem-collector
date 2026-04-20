@@ -63,14 +63,14 @@ pipelines:
     poll_interval_sec: 60          # 每 60 秒拉一次（稽核事件量少，60s 夠用）
     max_files_per_tick: 1000       # 每次最多處理 1000 個 S3 檔案
     mapper:
-      format: syslog_json          # RFC5424 header + 展平 JSON（FortiSIEM 推薦）
+      format: syslog_json          # RFC5424 header + 展平 JSON（SIEM 推薦）
       flatten: true                # 展平巢狀 JSON：created_by.agent.hostname → created_by_agent_hostname
     sink:
       type: tls                    # TLS 加密 TCP（推薦）
-      host: "fortisiem.example.com"
-      port: 6514                   # FortiSIEM TLS syslog 預設 port
+      host: "siem.example.com"
+      port: 6514                   # SIEM TLS syslog 預設 port
       tls:
-        verify: true               # 驗證 FortiSIEM 憑證；內部自簽可改 false
+        verify: true               # 驗證 SIEM 憑證；內部自簽可改 false
         ca_file: null              # 自訂 CA 憑證路徑（null = 使用系統 CA）
       timeout_sec: 10
       max_retries: 3               # 失敗重試 3 次
@@ -85,7 +85,7 @@ pipelines:
     mapper: { format: syslog_json, flatten: true }
     sink:
       type: tls
-      host: "fortisiem.example.com"
+      host: "siem.example.com"
       port: 6514
 
   # ── [建議收] 潛在封鎖流量（pd=1）───────────────────
@@ -98,7 +98,7 @@ pipelines:
     mapper: { format: syslog_json, flatten: true }
     sink:
       type: tls
-      host: "fortisiem.example.com"
+      host: "siem.example.com"
       port: 6514
 
   # ── [選收] 允許流量（pd=0）─────────────────────────
@@ -114,7 +114,7 @@ pipelines:
     mapper: { format: syslog_json, flatten: true }
     sink:
       type: tls
-      host: "fortisiem.example.com"
+      host: "siem.example.com"
       port: 6514
 
   # ── [進階] 使用 CEF 格式 ────────────────────────────
@@ -129,8 +129,8 @@ pipelines:
       mapping_file: "mappings/auditable.yaml"   # 欄位對應設定檔
     sink:
       type: tcp
-      host: "fortisiem.example.com"
-      port: 1470                   # FortiSIEM TCP syslog 預設 port
+      host: "siem.example.com"
+      port: 1470                   # SIEM TCP syslog 預設 port
 
   # ── [進階] HTTPS batch（Splunk / Elastic）─────────
   - name: "audit-https"
@@ -140,7 +140,7 @@ pipelines:
     mapper: { format: json, flatten: true }     # 純 JSON，適合 HTTP receiver
     sink:
       type: https
-      url: "https://fortisiem.example.com/rawupload?vendor=Illumio&model=PCE"
+      url: "https://siem.example.com/rawupload?vendor=Illumio&model=PCE"
       batch_size: 100              # 累積 100 筆再一次送出
       timeout_sec: 10
 

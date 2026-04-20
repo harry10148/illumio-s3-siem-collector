@@ -43,7 +43,7 @@ cp -r \
   "${REPO_ROOT}/collector.py" \
   "${REPO_ROOT}/core" "${REPO_ROOT}/sources" "${REPO_ROOT}/mappers" \
   "${REPO_ROOT}/sinks" "${REPO_ROOT}/mappings" \
-  "${REPO_ROOT}/fortisiem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/docs" \
+  "${REPO_ROOT}/siem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/docs" \
   "${REPO_ROOT}/requirements.txt" \
   "${REPO_ROOT}/config.example.yaml" \
   "${REPO_ROOT}/README.md" \

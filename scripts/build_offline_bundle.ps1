@@ -51,7 +51,7 @@ Copy-Item -Path (Join-Path $RepoRoot "collector.py"), `
               (Join-Path $RepoRoot "requirements.txt"), `
               (Join-Path $RepoRoot "config.example.yaml"), `
               (Join-Path $RepoRoot "README.md") -Destination $AppDst
-foreach ($sub in "core","sources","mappers","sinks","mappings","fortisiem_parser","tests","docs") {
+foreach ($sub in "core","sources","mappers","sinks","mappings","siem_parser","tests","docs") {
     Copy-Item -Recurse -Path (Join-Path $RepoRoot $sub) -Destination $AppDst
 }
 

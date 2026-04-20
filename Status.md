@@ -7,7 +7,7 @@
 ## Summary
 
 Refactoring the one-shot `s3_log_checker.py` into a production S3 → SIEM collector
-(`illumio_s3_collector`). Target SIEM: **FortiSIEM** at customer site.
+(`illumio_s3_collector`). Target SIEM: **SIEM** at customer site.
 
 ## Completed
 
@@ -17,7 +17,7 @@ Refactoring the one-shot `s3_log_checker.py` into a production S3 → SIEM colle
   - Filename pattern `{YYYYMMDD}_{uuid}.jsonl.gz` 100% consistent
   - Critical finding: same-day UUIDs are random → checkpoint must use
     `LastModified`, not key ordering alone
-- FortiSIEM constraints researched
+- SIEM constraints researched
   - UDP ≤ 1024 bytes, TCP/TLS ≤ 8192 bytes
   - Basic JSON parser flat-only → need upstream flatten
   - HTTPS rawupload endpoint supports batch
@@ -40,7 +40,7 @@ Refactoring the one-shot `s3_log_checker.py` into a production S3 → SIEM colle
 | Flatten | Nested JSON → `_`-separated keys, arrays stringified by default |
 | Platforms | Linux (systemd) + Windows (NSSM), no Docker |
 | Offline deploy | Bundle ships portable Python (python-build-standalone); target needs **no Python, no pip, no internet** |
-| FortiSIEM side | Custom Parser XML templates shipped with tool |
+| SIEM side | Custom Parser XML templates shipped with tool |
 
 ## Next steps
 
@@ -53,7 +53,7 @@ Refactoring the one-shot `s3_log_checker.py` into a production S3 → SIEM colle
 
 Context persisted to mem0 under `project="illumio_s3_collector"`, 8 topics
 (project-overview, architecture-decisions, s3-pull-algorithm,
-fortisiem-constraints, offline-deployment, resolved-defaults,
+siem-constraints, offline-deployment, resolved-defaults,
 execution-state, real-bucket-data-facts).
 
 On a new device, after cloning the repo, run:

@@ -158,7 +158,7 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
         "$InstallDir\app\collector.py --config $InstallDir\config.yaml"
     & $Nssm set $ServiceName AppDirectory   "$InstallDir\app"
     & $Nssm set $ServiceName DisplayName    "Illumio S3 to SIEM Collector"
-    & $Nssm set $ServiceName Description    "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
+    & $Nssm set $ServiceName Description    "Pull Illumio PCE logs from S3 and forward to SIEM"
     & $Nssm set $ServiceName AppStdout      "$InstallDir\logs\nssm-stdout.log"
     & $Nssm set $ServiceName AppStderr      "$InstallDir\logs\nssm-stderr.log"
     & $Nssm set $ServiceName AppRotateFiles 1
@@ -183,7 +183,7 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
         Name            = $ServiceName
         BinaryPathName  = $BinPath
         DisplayName     = "Illumio S3 to SIEM Collector"
-        Description     = "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
+        Description     = "Pull Illumio PCE logs from S3 and forward to SIEM"
         StartupType     = "Automatic"
     }
     if ($ServiceAccount -ne "LocalSystem" -and $ServicePassword) {
