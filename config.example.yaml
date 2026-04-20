@@ -1,0 +1,109 @@
+# Illumio S3 -> SIEM Collector - annotated example
+# Copy to config.yaml and edit; config.yaml is git-ignored.
+
+aws:
+  profile: null
+  access_key: "AKIA..."
+  secret_key: "..."
+  region: "ap-northeast-1"
+
+source:
+  type: s3
+  bucket: "illumio-flow-ap-scp45-msig-mingtai-com-tw"
+  fqdn: "ap-scp45.illum.io"
+  org_id: "4456569"
+
+checkpoint:
+  dir: "./state"
+  initial_lookback_hours: 0
+  atomic_write: true
+
+logging:
+  level: INFO
+  dir: "./logs"
+  file: "collector.log"
+  rotate_mb: 50
+  keep_files: 7
+  console: true
+
+pipelines:
+
+  # Auditable events -> FortiSIEM over TLS (recommended)
+  - name: "audit-to-fortisiem"
+    enabled: true
+    log_type: auditable
+    poll_interval_sec: 60
+    max_files_per_tick: 1000
+    mapper:
+      format: syslog_json
+      flatten: true
+    sink:
+      type: tls
+      host: "fortisiem.example.com"
+      port: 6514
+      tls:
+        verify: true
+        ca_file: null
+      timeout_sec: 10
+      max_retries: 3
+      retry_backoff_sec: [1, 2, 4]
+
+  # Blocked traffic
+  - name: "deny-traffic"
+    enabled: true
+    log_type: pd2
+    poll_interval_sec: 30
+    mapper: { format: syslog_json, flatten: true }
+    sink:
+      type: tls
+      host: "fortisiem.example.com"
+      port: 6514
+
+  # Example: only forward SMB/RDP/SSH from "potentially-blocked"
+  - name: "pd1-smb-rdp-ssh-only"
+    enabled: false
+    log_type: pd1
+    poll_interval_sec: 300
+    filter:
+      expression: "ev.dst_port in (22, 445, 3389)"
+    mapper: { format: syslog_json, flatten: true }
+    sink:
+      type: tls
+      host: "fortisiem.example.com"
+      port: 6514
+
+  # Example: CEF format (requires mapping file)
+  - name: "audit-cef-backup"
+    enabled: false
+    log_type: auditable
+    poll_interval_sec: 300
+    mapper:
+      format: cef
+      mapping_file: "mappings/auditable.yaml"
+    sink:
+      type: tcp
+      host: "fortisiem.example.com"
+      port: 1470
+
+  # Example: HTTPS with batching
+  - name: "audit-https-batch"
+    enabled: false
+    log_type: auditable
+    poll_interval_sec: 120
+    mapper: { format: json, flatten: true }
+    sink:
+      type: https
+      url: "https://fortisiem.example.com/rawupload?vendor=Illumio&model=PCE"
+      batch_size: 100
+      timeout_sec: 10
+
+  # Example: UDP test only (<=1024 bytes)
+  - name: "test-udp"
+    enabled: false
+    log_type: auditable
+    poll_interval_sec: 60
+    mapper: { format: syslog_json, flatten: true }
+    sink:
+      type: udp
+      host: "127.0.0.1"
+      port: 514
