@@ -275,6 +275,8 @@ Get-Content C:\illumio-collector\logs\collector.log -Wait
 
 ## Operations
 
+> 完整操作手冊（安裝、更新、排錯）：**[docs/OPERATIONS.md](docs/OPERATIONS.md)**
+
 ### 查看運作狀況
 
 ```bash
