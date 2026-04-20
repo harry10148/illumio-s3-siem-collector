@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build offline install bundle for Linux x86_64.
-# Run on a host with internet + Python 3.11 + pip.
+# Run on a host with internet access + any Python 3.x + pip.
+# The bundle always ships Python 3.11 (from python-build-standalone);
+# the host Python version does not matter.
 set -euo pipefail
 
 VERSION="${VERSION:-1.0}"
@@ -19,7 +21,9 @@ curl -fL -o "${BUNDLE}/python-runtime.tar.gz" \
   "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PY_VER}+${PBS_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
 
 echo "==> Downloading wheels for manylinux2014_x86_64 / py3.11"
-python3.11 -m pip download \
+# Use whatever python3 is available — the --python-version flag controls
+# which wheels are downloaded, not which Python runs this script.
+python3 -m pip download \
   --only-binary=:all: \
   --platform manylinux2014_x86_64 \
   --python-version 3.11 --implementation cp --abi cp311 \
@@ -31,7 +35,7 @@ cp -r \
   "${REPO_ROOT}/collector.py" \
   "${REPO_ROOT}/core" "${REPO_ROOT}/sources" "${REPO_ROOT}/mappers" \
   "${REPO_ROOT}/sinks" "${REPO_ROOT}/mappings" \
-  "${REPO_ROOT}/fortisiem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/doc" \
+  "${REPO_ROOT}/fortisiem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/docs" \
   "${REPO_ROOT}/requirements.txt" \
   "${REPO_ROOT}/config.example.yaml" \
   "${REPO_ROOT}/README.md" \
@@ -41,7 +45,7 @@ cp "${REPO_ROOT}/docs/systemd/illumio-collector.service" "${BUNDLE}/systemd/"
 cp "${REPO_ROOT}/scripts/install.sh" "${BUNDLE}/install.sh"
 chmod +x "${BUNDLE}/install.sh"
 
-cat > "${BUNDLE}/VERSION" <<'EOF'
+cat > "${BUNDLE}/VERSION" <<EOF
 illumio-s3-siem-collector v${VERSION}
 built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 host:  $(uname -a)
