@@ -48,6 +48,7 @@ python -m pip download `
 Write-Host "==> Copying application code"
 $AppDst = Join-Path $Bundle "app"
 Copy-Item -Path (Join-Path $RepoRoot "collector.py"), `
+              (Join-Path $RepoRoot "s3_log_checker.py"), `
               (Join-Path $RepoRoot "requirements.txt"), `
               (Join-Path $RepoRoot "config.example.yaml"), `
               (Join-Path $RepoRoot "README.md") -Destination $AppDst

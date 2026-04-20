@@ -71,7 +71,7 @@ if ($Mode -eq "bundle") {
     }
 } else {
     $AppDst = Join-Path $InstallDir "app"
-    foreach ($item in "collector.py","requirements.txt","config.example.yaml") {
+    foreach ($item in "collector.py","s3_log_checker.py","requirements.txt","config.example.yaml") {
         Copy-Item -Force (Join-Path $RepoRoot $item) $AppDst
     }
     foreach ($sub in "core","sources","mappers","sinks","mappings") {

@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$(mktemp -d)"
 BUNDLE="${BUILD_DIR}/bundle"
 
-mkdir -p "${BUNDLE}/app" "${BUNDLE}/wheels" "${BUNDLE}/systemd" "${OUT_DIR}"
+mkdir -p "${BUNDLE}/app" "${BUNDLE}/wheels" "${OUT_DIR}"
 
 echo "==> Downloading python-build-standalone cpython-${PY_VER}+${PBS_TAG}"
 curl -fL -o "${BUNDLE}/python-runtime.tar.gz" \
@@ -41,6 +41,7 @@ python3 -m pip download \
 echo "==> Copying application code"
 cp -r \
   "${REPO_ROOT}/collector.py" \
+  "${REPO_ROOT}/s3_log_checker.py" \
   "${REPO_ROOT}/core" "${REPO_ROOT}/sources" "${REPO_ROOT}/mappers" \
   "${REPO_ROOT}/sinks" "${REPO_ROOT}/mappings" \
   "${REPO_ROOT}/siem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/docs" \
@@ -49,7 +50,6 @@ cp -r \
   "${REPO_ROOT}/README.md" \
   "${BUNDLE}/app/"
 
-cp "${REPO_ROOT}/docs/systemd/illumio-collector.service" "${BUNDLE}/systemd/"
 cp "${REPO_ROOT}/scripts/install.sh"    "${BUNDLE}/install.sh"
 cp "${REPO_ROOT}/scripts/uninstall.sh"  "${BUNDLE}/uninstall.sh"
 cp "${REPO_ROOT}/scripts/preflight.sh"  "${BUNDLE}/preflight.sh"
