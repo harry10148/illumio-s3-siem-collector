@@ -67,6 +67,7 @@ try {
 Write-Host "==> Copying install / uninstall / preflight scripts"
 Copy-Item (Join-Path $RepoRoot "scripts/install.ps1")   $Bundle
 Copy-Item (Join-Path $RepoRoot "scripts/uninstall.ps1") $Bundle
+Copy-Item (Join-Path $RepoRoot "scripts/preflight.ps1") $Bundle
 Copy-Item (Join-Path $RepoRoot "scripts/preflight.sh")  $Bundle
 
 @"

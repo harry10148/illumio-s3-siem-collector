@@ -96,8 +96,10 @@ cd illumio_s3_collector
 
 ### 安裝前測試（preflight check）
 
-建議在執行 `install.sh` 前先跑一次 preflight，確認 Python、依賴套件、config 語法、S3 連線都沒問題。
-全程不需要 sudo，不寫入任何系統路徑，完成後自動清掉 temp。
+建議在執行 `install.sh` / `install.ps1` 前先跑一次 preflight，確認 Python、依賴套件、config 語法、S3 連線都沒問題。
+全程不需要 sudo / Administrator，不寫入任何系統路徑，完成後自動清掉 temp。
+
+#### Linux
 
 ```bash
 # 解壓 bundle（如果還沒解壓）
@@ -115,7 +117,25 @@ bash preflight.sh --config /tmp/config.yaml
 bash preflight.sh --config /tmp/config.yaml --test-s3
 ```
 
-輸出結尾看到 `PASS` 就可以安心執行 `sudo ./install.sh`。
+#### Windows
+
+```powershell
+# 解壓 bundle（如果還沒解壓）
+Expand-Archive illumio-collector-windows-x86_64-v1.0.zip C:\illumio-bundle
+cd C:\illumio-bundle
+
+# 先準備好 config
+Copy-Item app\config.example.yaml C:\temp\config.yaml
+notepad C:\temp\config.yaml
+
+# 只驗證 config 語法
+.\preflight.ps1 -Config C:\temp\config.yaml
+
+# 同時測試 S3 連線（推薦）
+.\preflight.ps1 -Config C:\temp\config.yaml -TestS3
+```
+
+輸出結尾看到 `PASS` 就可以安心執行 `sudo ./install.sh` / `.\install.ps1`。
 
 ---
 
