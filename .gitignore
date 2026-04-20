@@ -49,6 +49,7 @@ desktop.ini
 _probe*.py
 _scratch*
 _save_to_mem0.py
+_mem0*.py
 
 # ========== Git worktrees ==========
 .worktrees/
