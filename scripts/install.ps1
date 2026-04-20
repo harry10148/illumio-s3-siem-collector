@@ -93,7 +93,15 @@ if ($Mode -eq "bundle") {
 # ---------- config ----------
 $ConfigPath = Join-Path $InstallDir "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
-    Copy-Item (Join-Path $InstallDir "app\config.example.yaml") $ConfigPath
+    # Replace relative log/state paths with absolute paths under InstallDir.
+    $StateDir = Join-Path $InstallDir "state"
+    $LogsDir  = Join-Path $InstallDir "logs"
+    (Get-Content (Join-Path $InstallDir "app\config.example.yaml") -Raw) `
+        -replace 'dir: \./logs\b',  "dir: $LogsDir" `
+        -replace 'dir: logs\b',     "dir: $LogsDir" `
+        -replace 'dir: \./state\b', "dir: $StateDir" `
+        -replace 'dir: state\b',    "dir: $StateDir" |
+        Set-Content $ConfigPath -Encoding UTF8
 }
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $InstallDir "state"), `

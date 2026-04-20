@@ -77,7 +77,14 @@ fi
 # ---------- config ----------
 mkdir -p "${CONFIG_DIR}"
 if [[ ! -f "${CONFIG_DIR}/config.yaml" ]]; then
-  cp "${INSTALL_DIR}/app/config.example.yaml" "${CONFIG_DIR}/config.yaml"
+  # Replace relative log/state paths with absolute system paths so the
+  # service can write under ProtectSystem=strict.
+  sed \
+    -e "s|dir: \./logs\b|dir: ${LOG_DIR}|g" \
+    -e "s|dir: logs\b|dir: ${LOG_DIR}|g" \
+    -e "s|dir: \./state\b|dir: ${STATE_DIR}|g" \
+    -e "s|dir: state\b|dir: ${STATE_DIR}|g" \
+    "${INSTALL_DIR}/app/config.example.yaml" > "${CONFIG_DIR}/config.yaml"
   chmod 600 "${CONFIG_DIR}/config.yaml"
 fi
 
