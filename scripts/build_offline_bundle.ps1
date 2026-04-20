@@ -1,0 +1,65 @@
+<#
+.SYNOPSIS
+    Build offline install bundle for Windows x86_64.
+#>
+param(
+    [string]$Version = "1.0",
+    [string]$PbsTag  = "20240415",
+    [string]$PyVer   = "3.11.9"
+)
+
+$ErrorActionPreference = "Stop"
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$OutDir   = Join-Path $RepoRoot "dist"
+$BuildDir = Join-Path $env:TEMP ("illumio-build-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+$Bundle   = Join-Path $BuildDir "bundle"
+
+New-Item -ItemType Directory -Force -Path $OutDir, `
+    (Join-Path $Bundle "app"), (Join-Path $Bundle "wheels") | Out-Null
+
+Write-Host "==> Downloading python-build-standalone cpython-$PyVer+$PbsTag"
+$PyUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag/cpython-$PyVer+$PbsTag-x86_64-pc-windows-msvc-install_only.tar.gz"
+Invoke-WebRequest -Uri $PyUrl -OutFile (Join-Path $Bundle "python-runtime.tar.gz")
+
+Write-Host "==> Downloading wheels for win_amd64 / py3.11"
+python -m pip download `
+  --only-binary=:all: `
+  --platform win_amd64 `
+  --python-version 3.11 --implementation cp --abi cp311 `
+  -d (Join-Path $Bundle "wheels") `
+  -r (Join-Path $RepoRoot "requirements.txt")
+
+Write-Host "==> Copying application code"
+$AppDst = Join-Path $Bundle "app"
+Copy-Item -Path (Join-Path $RepoRoot "collector.py"), `
+              (Join-Path $RepoRoot "requirements.txt"), `
+              (Join-Path $RepoRoot "config.example.yaml"), `
+              (Join-Path $RepoRoot "README.md") -Destination $AppDst
+foreach ($sub in "core","sources","mappers","sinks","mappings","fortisiem_parser","tests","doc") {
+    Copy-Item -Recurse -Path (Join-Path $RepoRoot $sub) -Destination $AppDst
+}
+
+Write-Host "==> Downloading NSSM"
+Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
+    -OutFile (Join-Path $Bundle "nssm-2.24.zip")
+
+Write-Host "==> Copying install script"
+Copy-Item (Join-Path $RepoRoot "scripts/install.ps1") $Bundle
+
+@"
+illumio-s3-siem-collector v$Version
+built: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
+host:  $(hostname)
+python: cpython-$PyVer+$PbsTag (x86_64 windows msvc)
+"@ | Out-File (Join-Path $Bundle "VERSION") -Encoding UTF8
+
+$Zip = Join-Path $OutDir "illumio-collector-windows-x86_64-v$Version.zip"
+if (Test-Path $Zip) { Remove-Item $Zip }
+Compress-Archive -Path (Join-Path $Bundle "*") -DestinationPath $Zip
+
+$Hash = Get-FileHash $Zip -Algorithm SHA256
+"$($Hash.Hash)  $(Split-Path $Zip -Leaf)" | Out-File (Join-Path $OutDir "SHA256SUMS-windows.txt") -Encoding ASCII
+
+Write-Host "==> Done: $Zip"
+Remove-Item -Recurse -Force $BuildDir
