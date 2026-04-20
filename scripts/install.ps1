@@ -46,31 +46,59 @@ New-Item -ItemType Directory -Force -Path `
     (Join-Path $InstallDir "state"), `
     (Join-Path $InstallDir "logs") | Out-Null
 
-Write-Host "==> Extracting NSSM"
-$NssmDir = Join-Path $InstallDir "nssm"
-if (-not (Test-Path $NssmDir)) {
-    Expand-Archive -Path (Join-Path $BundleDir "nssm-2.24.zip") `
-                   -DestinationPath $NssmDir
-}
-$Nssm = Join-Path $NssmDir "nssm-2.24\win64\nssm.exe"
-
-Write-Host "==> Registering Windows service"
 $ServiceName = "IllumioCollector"
-& $Nssm install $ServiceName $PythonExe `
-    "$InstallDir\app\collector.py --config $InstallDir\config.yaml"
-& $Nssm set $ServiceName AppDirectory      "$InstallDir\app"
-& $Nssm set $ServiceName DisplayName       "Illumio S3 to SIEM Collector"
-& $Nssm set $ServiceName Description       "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
-& $Nssm set $ServiceName AppStdout         "$InstallDir\logs\nssm-stdout.log"
-& $Nssm set $ServiceName AppStderr         "$InstallDir\logs\nssm-stderr.log"
-& $Nssm set $ServiceName AppRotateFiles    1
-& $Nssm set $ServiceName AppRotateBytes    52428800
-& $Nssm set $ServiceName Start             SERVICE_AUTO_START
+$NssmZip = Join-Path $BundleDir "nssm-2.24.zip"
+$NssmDir  = Join-Path $InstallDir "nssm"
 
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "Install complete."
-Write-Host " 1. Edit the config:   notepad $ConfigPath"
-Write-Host " 2. Start the service: & `"$Nssm`" start $ServiceName"
-Write-Host " 3. Watch the logs:    Get-Content $InstallDir\logs\collector.log -Wait"
-Write-Host "============================================================"
+if (Test-Path $NssmZip) {
+    Write-Host "==> Extracting NSSM"
+    if (-not (Test-Path $NssmDir)) {
+        Expand-Archive -Path $NssmZip -DestinationPath $NssmDir
+    }
+    $Nssm = Join-Path $NssmDir "nssm-2.24\win64\nssm.exe"
+
+    Write-Host "==> Registering Windows service (via NSSM)"
+    & $Nssm install $ServiceName $PythonExe `
+        "$InstallDir\app\collector.py --config $InstallDir\config.yaml"
+    & $Nssm set $ServiceName AppDirectory      "$InstallDir\app"
+    & $Nssm set $ServiceName DisplayName       "Illumio S3 to SIEM Collector"
+    & $Nssm set $ServiceName Description       "Pull Illumio PCE logs from S3 and forward to FortiSIEM"
+    & $Nssm set $ServiceName AppStdout         "$InstallDir\logs\nssm-stdout.log"
+    & $Nssm set $ServiceName AppStderr         "$InstallDir\logs\nssm-stderr.log"
+    & $Nssm set $ServiceName AppRotateFiles    1
+    & $Nssm set $ServiceName AppRotateBytes    52428800
+    & $Nssm set $ServiceName Start             SERVICE_AUTO_START
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "Install complete."
+    Write-Host " 1. Edit the config:   notepad $ConfigPath"
+    Write-Host " 2. Start the service: & `"$Nssm`" start $ServiceName"
+    Write-Host " 3. Watch the logs:    Get-Content $InstallDir\logs\collector.log -Wait"
+    Write-Host "============================================================"
+} else {
+    Write-Host "==> Registering Windows service (via New-Service — NSSM not in bundle)"
+    $BinPath = "`"$PythonExe`" `"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
+    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+        sc.exe delete $ServiceName | Out-Null
+        Start-Sleep -Seconds 1
+    }
+    New-Service -Name        $ServiceName `
+                -BinaryPathName $BinPath `
+                -DisplayName "Illumio S3 to SIEM Collector" `
+                -Description "Pull Illumio PCE logs from S3 and forward to FortiSIEM" `
+                -StartupType Automatic | Out-Null
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "Install complete."
+    Write-Host " 1. Edit the config:   notepad $ConfigPath"
+    Write-Host " 2. Start the service: Start-Service $ServiceName"
+    Write-Host " 3. Watch the logs:    Get-Content $InstallDir\logs\collector.log -Wait"
+    Write-Host ""
+    Write-Host " NOTE: Service registered without NSSM. stdout/stderr will not"
+    Write-Host "       be captured automatically. For production use, download"
+    Write-Host "       nssm-2.24.zip from https://nssm.cc and re-run install.ps1"
+    Write-Host "============================================================"
+}

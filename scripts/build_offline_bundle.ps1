@@ -9,7 +9,9 @@
         .\scripts\build_offline_bundle.ps1
         -> dist\illumio-collector-windows-x86_64-v1.0.zip
 
-    The bundle includes Python 3.11 runtime + all wheels + NSSM.
+    The bundle includes Python 3.11 runtime + all wheels.
+    NSSM (Windows service manager) is included if nssm.cc is reachable;
+    if the download fails, install.ps1 falls back to New-Service.
     The target (offline) host needs only Windows 10 / Server 2016+.
     No Python, pip, or internet required on the target.
 
@@ -49,13 +51,18 @@ Copy-Item -Path (Join-Path $RepoRoot "collector.py"), `
               (Join-Path $RepoRoot "requirements.txt"), `
               (Join-Path $RepoRoot "config.example.yaml"), `
               (Join-Path $RepoRoot "README.md") -Destination $AppDst
-foreach ($sub in "core","sources","mappers","sinks","mappings","fortisiem_parser","tests","doc") {
+foreach ($sub in "core","sources","mappers","sinks","mappings","fortisiem_parser","tests","docs") {
     Copy-Item -Recurse -Path (Join-Path $RepoRoot $sub) -Destination $AppDst
 }
 
-Write-Host "==> Downloading NSSM"
-Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
-    -OutFile (Join-Path $Bundle "nssm-2.24.zip")
+Write-Host "==> Downloading NSSM (optional — install.ps1 falls back to New-Service if missing)"
+try {
+    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
+        -OutFile (Join-Path $Bundle "nssm-2.24.zip") -ErrorAction Stop
+    Write-Host "    NSSM downloaded OK"
+} catch {
+    Write-Warning "NSSM download failed ($_). Bundle will use New-Service fallback."
+}
 
 Write-Host "==> Copying install script"
 Copy-Item (Join-Path $RepoRoot "scripts/install.ps1") $Bundle
