@@ -30,11 +30,19 @@ class HttpsSink(Sink):
         self.retry_backoff = retry_backoff_sec if retry_backoff_sec is not None else [1, 2, 4]
         self.session = requests.Session()
         self.buffer: list[bytes] = []
+        self._blocked_on_flush_failure = False
 
     def send(self, wire: bytes) -> bool:
+        if self._blocked_on_flush_failure:
+            if not self._flush():
+                return False
+            self._blocked_on_flush_failure = False
+
         self.buffer.append(wire)
         if len(self.buffer) >= self.batch_size:
-            return self._flush()
+            ok = self._flush()
+            self._blocked_on_flush_failure = not ok
+            return ok
         return True
 
     def _flush(self) -> bool:
@@ -61,6 +69,8 @@ class HttpsSink(Sink):
                 log.warning("HTTPS POST %s failed (attempt %d): %s",
                             self.url, attempts + 1, e)
             if attempts >= self.max_retries:
+                log.error("HTTPS flush failed; keeping %d pending events in buffer",
+                          len(self.buffer))
                 return False
             delay = self.retry_backoff[min(attempts, len(self.retry_backoff) - 1)] \
                 if self.retry_backoff else 0
@@ -68,8 +78,13 @@ class HttpsSink(Sink):
                 time.sleep(delay)
             attempts += 1
 
+    def flush(self) -> bool:
+        ok = self._flush()
+        self._blocked_on_flush_failure = not ok
+        return ok
+
     def close(self) -> None:
         try:
-            self._flush()
+            self.flush()
         finally:
             self.session.close()

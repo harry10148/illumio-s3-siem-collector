@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+from bisect import insort
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, List, Optional, Tuple
 
@@ -70,6 +71,9 @@ class S3Source(Source):
         checkpoint: Checkpoint,
         max_files_per_tick: int = 1000,
     ) -> Iterator[Tuple[str, datetime, bytes]]:
+        if max_files_per_tick <= 0:
+            return
+
         base = self._base_prefix(log_type)
         scan_prefixes = self._scan_date_prefixes(base, checkpoint)
         log.debug("scan prefixes for %s: %s", log_type, scan_prefixes)
@@ -81,12 +85,14 @@ class S3Source(Source):
                 for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
                     for obj in page.get("Contents", []) or []:
                         if self._is_new(obj, checkpoint):
-                            candidates.append((obj["LastModified"], obj["Key"]))
+                            item = (obj["LastModified"], obj["Key"])
+                            if len(candidates) < max_files_per_tick:
+                                insort(candidates, item)
+                            elif item < candidates[-1]:
+                                candidates.pop()
+                                insort(candidates, item)
             except ClientError as e:
                 raise SourceError(f"S3 list failed for {prefix}: {e}") from e
-
-        candidates.sort(key=lambda t: (t[0], t[1]))
-        candidates = candidates[:max_files_per_tick]
 
         for lm, key in candidates:
             try:

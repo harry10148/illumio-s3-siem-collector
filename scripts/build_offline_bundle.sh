@@ -17,6 +17,7 @@ VERSION="${VERSION:-1.0}"
 PBS_TAG="${PBS_TAG:-20240415}"
 PY_VER="${PY_VER:-3.11.9}"
 OUT_DIR="${OUT_DIR:-$(pwd)/dist}"
+PY_RUNTIME_SHA256="${PY_RUNTIME_SHA256:-78b1c16a9fd032997ba92a60f46a64f795cd18ff335659dfdf6096df277b24d5}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$(mktemp -d)"
@@ -27,6 +28,8 @@ mkdir -p "${BUNDLE}/app" "${BUNDLE}/wheels" "${OUT_DIR}"
 echo "==> Downloading python-build-standalone cpython-${PY_VER}+${PBS_TAG}"
 curl -fL -o "${BUNDLE}/python-runtime.tar.gz" \
   "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PY_VER}+${PBS_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+echo "==> Verifying python runtime SHA256"
+echo "${PY_RUNTIME_SHA256}  ${BUNDLE}/python-runtime.tar.gz" | sha256sum -c -
 
 echo "==> Downloading wheels for manylinux2014_x86_64 / py3.11"
 # Use whatever python3 is available — the --python-version flag controls

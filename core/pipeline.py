@@ -97,6 +97,11 @@ class Pipeline:
             else:
                 stats["failed"] += 1
                 return False, sent_in_file
+        if sent_in_file and not self.sink.flush():
+            stats["sent"] -= sent_in_file
+            stats["failed"] += 1
+            self.log.error("sink flush failed on %s", key)
+            return False, sent_in_file
         return True, sent_in_file
 
 

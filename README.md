@@ -691,10 +691,18 @@ sudo journalctl -u illumio-collector --no-pager | tail -30
 
 ```bash
 # git clone 模式
+python s3_log_checker.py --config config.yaml
+
+# 或直接帶參數
 python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> \
     --access-key <AK> --secret-key <SK>
 
 # bundle 模式（已安裝）
+sudo /opt/illumio-collector/python/bin/python3 \
+  /opt/illumio-collector/app/s3_log_checker.py \
+  --config /etc/illumio-collector/config.yaml
+
+# 或直接帶參數
 sudo /opt/illumio-collector/python/bin/python3 \
   /opt/illumio-collector/app/s3_log_checker.py \
   --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK>

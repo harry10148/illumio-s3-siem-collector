@@ -9,6 +9,10 @@ class Sink(ABC):
     def send(self, wire: bytes) -> bool:
         """Return True on success, False after retries exhausted."""
 
+    def flush(self) -> bool:
+        """Force pending buffered data out (if any)."""
+        return True
+
     @abstractmethod
     def close(self) -> None:
         ...

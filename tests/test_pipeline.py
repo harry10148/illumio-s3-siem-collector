@@ -35,6 +35,9 @@ class FakeSink:
         self.sent.append(w)
         return True
 
+    def flush(self):
+        return True
+
     def close(self):
         pass
 
@@ -138,6 +141,28 @@ def test_invalid_json_line_skipped(tmp_state_dir):
     )
     p.tick()
     assert len(sink.sent) == 2
+
+
+def test_flush_failure_blocks_checkpoint(tmp_state_dir):
+    files = [
+        ("k1", _lm("2026-04-20T10:00:00+00:00"),
+         _gz_lines([{"a": 1}, {"a": 2}])),
+    ]
+
+    class FlushFailSink(FakeSink):
+        def flush(self):
+            return False
+
+    sink = FlushFailSink()
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource(files), mapper=FakeMapper(), sink=sink,
+        checkpoint_store=CheckpointStore(tmp_state_dir),
+        filter_fn=None, max_files_per_tick=100,
+    )
+    p.tick()
+    cp = p.checkpoint_store.load("p1")
+    assert cp.last_key is None
 
 
 # ---------------------------------------------------------------------------

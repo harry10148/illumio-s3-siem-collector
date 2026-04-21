@@ -20,7 +20,9 @@
 param(
     [string]$Version = "1.0",
     [string]$PbsTag  = "20240415",
-    [string]$PyVer   = "3.11.9"
+    [string]$PyVer   = "3.11.9",
+    [string]$PythonRuntimeSha256 = "368474c69f476e7de4adaf50b61d9fcf6ec8b4db88cc43c5f71c860b3cd29c69",
+    [string]$NssmSha256 = "727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743"
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +37,12 @@ New-Item -ItemType Directory -Force -Path $OutDir, `
 
 Write-Host "==> Downloading python-build-standalone cpython-$PyVer+$PbsTag"
 $PyUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$PbsTag/cpython-$PyVer+$PbsTag-x86_64-pc-windows-msvc-install_only.tar.gz"
-Invoke-WebRequest -Uri $PyUrl -OutFile (Join-Path $Bundle "python-runtime.tar.gz")
+$PyTarPath = Join-Path $Bundle "python-runtime.tar.gz"
+Invoke-WebRequest -Uri $PyUrl -OutFile $PyTarPath
+$PyHash = (Get-FileHash -Path $PyTarPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($PyHash -ne $PythonRuntimeSha256.ToLowerInvariant()) {
+    throw "Python runtime checksum mismatch. expected=$PythonRuntimeSha256 actual=$PyHash"
+}
 
 Write-Host "==> Downloading wheels for win_amd64 / py3.11"
 python -m pip download `
@@ -58,11 +65,18 @@ foreach ($sub in "core","sources","mappers","sinks","mappings","siem_parser","te
 
 Write-Host "==> Downloading NSSM (optional — install.ps1 falls back to New-Service if missing)"
 try {
+    $NssmZipPath = Join-Path $Bundle "nssm-2.24.zip"
     Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
-        -OutFile (Join-Path $Bundle "nssm-2.24.zip") -ErrorAction Stop
-    Write-Host "    NSSM downloaded OK"
+        -OutFile $NssmZipPath -ErrorAction Stop
+    $NssmHash = (Get-FileHash -Path $NssmZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($NssmHash -ne $NssmSha256.ToLowerInvariant()) {
+        throw "NSSM checksum mismatch. expected=$NssmSha256 actual=$NssmHash"
+    }
+    Write-Host "    NSSM downloaded and checksum verified"
 } catch {
     Write-Warning "NSSM download failed ($_). Bundle will use New-Service fallback."
+    $NssmZipPath = Join-Path $Bundle "nssm-2.24.zip"
+    if (Test-Path $NssmZipPath) { Remove-Item -Force $NssmZipPath }
 }
 
 Write-Host "==> Copying install / uninstall / preflight scripts"

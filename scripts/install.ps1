@@ -18,8 +18,9 @@
 
 .PARAMETER ServiceAccount
     Windows account to run the service under.
-    Default: "LocalSystem" (simplest; has full local access).
-    Use "NT AUTHORITY\NetworkService" for a more restricted account,
+    Default: "NT AUTHORITY\NetworkService" (recommended least privilege default).
+    Use "LocalSystem" only if you explicitly need full local system access.
+    You can also use "NT AUTHORITY\LocalService" for stricter local permissions,
     or "DOMAIN\username" for a domain account (NSSM only — requires
     -ServicePassword as well).
 
@@ -29,7 +30,7 @@
 #>
 param(
     [string]$InstallDir      = "$env:ProgramFiles\illumio-collector",
-    [string]$ServiceAccount  = "LocalSystem",
+    [string]$ServiceAccount  = "NT AUTHORITY\NetworkService",
     [string]$ServicePassword = ""
 )
 
@@ -42,6 +43,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administra
 }
 
 $ScriptDir = $PSScriptRoot
+$BuiltInAccounts = @("LocalSystem", "NT AUTHORITY\NetworkService", "NT AUTHORITY\LocalService")
+$IsBuiltInServiceAccount = $BuiltInAccounts -contains $ServiceAccount
+
+if (-not $IsBuiltInServiceAccount -and [string]::IsNullOrEmpty($ServicePassword)) {
+    Write-Error "ServicePassword is required when ServiceAccount is not a built-in account."
+    exit 1
+}
 
 # ---------- detect mode ----------
 if (Test-Path (Join-Path $ScriptDir "python-runtime.tar.gz")) {
@@ -166,7 +174,11 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
     & $Nssm set $ServiceName AppRotateBytes 52428800
     & $Nssm set $ServiceName Start          SERVICE_AUTO_START
     if ($ServiceAccount -ne "LocalSystem") {
-        & $Nssm set $ServiceName ObjectName $ServiceAccount $ServicePassword
+        if ($IsBuiltInServiceAccount) {
+            & $Nssm set $ServiceName ObjectName $ServiceAccount
+        } else {
+            & $Nssm set $ServiceName ObjectName $ServiceAccount $ServicePassword
+        }
     }
 
     Write-Host ""
@@ -187,14 +199,14 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
         Description     = "Pull Illumio PCE logs from S3 and forward to SIEM"
         StartupType     = "Automatic"
     }
-    if ($ServiceAccount -ne "LocalSystem" -and $ServicePassword) {
-        $cred = New-Object System.Management.Automation.PSCredential(
-            $ServiceAccount,
-            (ConvertTo-SecureString $ServicePassword -AsPlainText -Force)
-        )
-        $svcParams["Credential"] = $cred
-    }
     New-Service @svcParams | Out-Null
+    if ($ServiceAccount -ne "LocalSystem") {
+        if ($IsBuiltInServiceAccount) {
+            & sc.exe config $ServiceName "obj= $ServiceAccount" | Out-Null
+        } else {
+            & sc.exe config $ServiceName "obj= $ServiceAccount" "password= $ServicePassword" | Out-Null
+        }
+    }
 
     Write-Host ""
     Write-Host "============================================================"

@@ -2,7 +2,24 @@
 
 ## Current phase
 
-**v1.0 + post-release polish 完成。可交付客戶部署。**
+**v1.0 + post-release polish 完成；`s3_log_checker.py` 的 `--list` / `--download` 回歸與 `config.yaml` 支援已修正並驗證。**
+
+## 2026-04-21 Code Review Snapshot（穩定性 / 可靠性 / 資安）
+
+- 已完成一次以生產風險為中心的審查（pipeline/sink/source/install/bundle）。
+- 最高風險集中在 HTTPS batching 失敗重試語意與 daemon flush 行為。
+- 次高風險在 S3 掃描記憶體上限、Windows 預設服務帳號權限、離線 bundle 供應鏈驗證。
+- 測試現況：`.venv/bin/pytest -q -s tests` 可通過（74 passed），但預設 capture 模式在此環境會觸發 pytest I/O 例外。
+
+## 2026-04-21 Fix Pass（review findings 已修復）
+
+- HTTPS sink：加入 flush failure gate，避免失敗後重複 append 導致 buffer 無上限成長。
+- Pipeline：每檔案處理完成後 `sink.flush()`；flush 失敗時 checkpoint 不前進。
+- Scheduler：daemon 結束時統一關閉 sinks，避免 HTTPS batch 尾端事件遺失。
+- S3 source：改為 bounded candidate selection，不再先累積全量 candidates。
+- Windows install：預設 service account 改為 `NT AUTHORITY\NetworkService`。
+- 離線 bundle：Python runtime/NSSM 下載加入 SHA256 驗證。
+- 測試現況更新：`.venv/bin/pytest -q -s tests` → **74 passed**。
 
 ## Summary
 
