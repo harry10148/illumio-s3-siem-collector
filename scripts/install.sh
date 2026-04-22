@@ -62,11 +62,13 @@ if [[ "${MODE}" == "bundle" ]]; then
   [[ -f "${BUNDLE_DIR}/uninstall.sh" ]] && \
     install -m 0755 "${BUNDLE_DIR}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 else
-  for item in collector.py s3_log_checker.py core sources mappers sinks mappings requirements.txt config.example.yaml; do
+  for item in collector.py s3_log_checker.py core sources mappers sinks mappings siem_parser requirements.txt config.example.yaml; do
     cp -r "${REPO_ROOT}/${item}" "${INSTALL_DIR}/app/"
   done
   [[ -f "${REPO_ROOT}/scripts/uninstall.sh" ]] && \
     install -m 0755 "${REPO_ROOT}/scripts/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
+  [[ -f "${REPO_ROOT}/scripts/preflight.sh" ]] && \
+    install -m 0755 "${REPO_ROOT}/scripts/preflight.sh" "${INSTALL_DIR}/preflight.sh"
 fi
 
 # ---------- save install metadata ----------

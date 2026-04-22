@@ -82,11 +82,14 @@ if ($Mode -eq "bundle") {
     foreach ($item in "collector.py","s3_log_checker.py","requirements.txt","config.example.yaml") {
         Copy-Item -Force (Join-Path $RepoRoot $item) $AppDst
     }
-    foreach ($sub in "core","sources","mappers","sinks","mappings") {
+    foreach ($sub in "core","sources","mappers","sinks","mappings","siem_parser") {
         Copy-Item -Recurse -Force (Join-Path $RepoRoot $sub) $AppDst
     }
     if (Test-Path (Join-Path $RepoRoot "scripts\uninstall.ps1")) {
         Copy-Item -Force (Join-Path $RepoRoot "scripts\uninstall.ps1") $InstallDir
+    }
+    if (Test-Path (Join-Path $RepoRoot "scripts\preflight.ps1")) {
+        Copy-Item -Force (Join-Path $RepoRoot "scripts\preflight.ps1") $InstallDir
     }
 }
 
@@ -173,7 +176,13 @@ if ($existing) {
     Start-Sleep -Seconds 1
 }
 
-$NssmZip = if ($Mode -eq "bundle") { Join-Path $BundleDir "nssm-2.24.zip" } else { "" }
+# NSSM source priority: bundle zip → repo vendor copy → fail
+$VendorNssm = if ($Mode -eq "gitclone") { Join-Path $RepoRoot "vendor\windows\nssm-2.24.zip" } else { "" }
+$NssmZip = if ($Mode -eq "bundle" -and (Test-Path (Join-Path $BundleDir "nssm-2.24.zip"))) {
+    Join-Path $BundleDir "nssm-2.24.zip"
+} elseif ($VendorNssm -and (Test-Path $VendorNssm)) {
+    $VendorNssm
+} else { "" }
 $NssmDir = Join-Path $InstallDir "nssm"
 
 if ($NssmZip -and (Test-Path $NssmZip)) {
