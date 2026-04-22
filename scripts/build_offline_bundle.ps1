@@ -22,7 +22,10 @@ param(
     [string]$PbsTag  = "20240415",
     [string]$PyVer   = "3.11.9",
     [string]$PythonRuntimeSha256 = "368474c69f476e7de4adaf50b61d9fcf6ec8b4db88cc43c5f71c860b3cd29c69",
-    [string]$NssmSha256 = "727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743"
+    [string]$NssmSha256 = "727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743",
+    # Pre-downloaded nssm-2.24.zip — skip network download when provided.
+    # Usage: .\build_offline_bundle.ps1 -NssmZipPath C:\Downloads\nssm-2.24.zip
+    [string]$NssmZipPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,21 +66,46 @@ foreach ($sub in "core","sources","mappers","sinks","mappings","siem_parser","te
     Copy-Item -Recurse -Path (Join-Path $RepoRoot $sub) -Destination $AppDst
 }
 
-Write-Host "==> Downloading NSSM (optional — install.ps1 falls back to New-Service if missing)"
-try {
-    $NssmZipPath = Join-Path $Bundle "nssm-2.24.zip"
-    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
-        -OutFile $NssmZipPath -ErrorAction Stop
-    $NssmHash = (Get-FileHash -Path $NssmZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($NssmHash -ne $NssmSha256.ToLowerInvariant()) {
-        throw "NSSM checksum mismatch. expected=$NssmSha256 actual=$NssmHash"
+Write-Host "==> Resolving NSSM (required for Windows service)"
+$VendorNssm = Join-Path $RepoRoot "vendor\windows\nssm-2.24.zip"
+$BundleNssm = Join-Path $Bundle "nssm-2.24.zip"
+
+if ($NssmZipPath -and (Test-Path $NssmZipPath)) {
+    Write-Host "    Using provided: $NssmZipPath"
+    Copy-Item $NssmZipPath $BundleNssm
+} elseif (Test-Path $VendorNssm) {
+    Write-Host "    Using vendor copy: $VendorNssm"
+    Copy-Item $VendorNssm $BundleNssm
+} else {
+    Write-Host "    Downloading from nssm.cc ..."
+    try {
+        Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" `
+            -OutFile $BundleNssm -ErrorAction Stop
+        Write-Host "    Download OK"
+    } catch {
+        Write-Error @"
+NSSM download failed: $_
+
+NSSM is required — install.ps1 cannot register a Windows service without it.
+
+To fix, choose one:
+  A) Re-run with a pre-downloaded zip:
+       .\build_offline_bundle.ps1 -NssmZipPath C:\Downloads\nssm-2.24.zip
+  B) Vendor it permanently (download once, commit, never download again):
+       New-Item -ItemType Directory -Force vendor\windows
+       Copy-Item C:\Downloads\nssm-2.24.zip vendor\windows\nssm-2.24.zip
+       git add vendor\windows\nssm-2.24.zip
+       git commit -m "vendor: add NSSM 2.24 for Windows bundle"
+"@
+        exit 1
     }
-    Write-Host "    NSSM downloaded and checksum verified"
-} catch {
-    Write-Warning "NSSM download failed ($_). Bundle will use New-Service fallback."
-    $NssmZipPath = Join-Path $Bundle "nssm-2.24.zip"
-    if (Test-Path $NssmZipPath) { Remove-Item -Force $NssmZipPath }
 }
+
+$NssmHash = (Get-FileHash -Path $BundleNssm -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($NssmHash -ne $NssmSha256.ToLowerInvariant()) {
+    throw "NSSM checksum mismatch. expected=$NssmSha256 actual=$NssmHash"
+}
+Write-Host "    Checksum verified"
 
 Write-Host "==> Copying install / uninstall / preflight scripts"
 Copy-Item (Join-Path $RepoRoot "scripts/install.ps1")   $Bundle
