@@ -132,17 +132,32 @@ $ConfigPath = Join-Path $InstallDir "config.yaml"
 if (-not (Test-Path $ConfigPath)) {
     $StateDir = Join-Path $InstallDir "state"
     $LogsDir  = Join-Path $InstallDir "logs"
+    # YAML double-quoted strings treat backslash as escape character.
+    # Use forward slashes — Python and Windows both accept them as path separators.
+    $StateDirYaml = $StateDir.Replace('\', '/')
+    $LogsDirYaml  = $LogsDir.Replace('\', '/')
     (Get-Content (Join-Path $InstallDir "app\config.example.yaml") -Raw -Encoding UTF8) `
-        -replace 'dir: \./logs\b',  "dir: $LogsDir" `
-        -replace 'dir: logs\b',     "dir: $LogsDir" `
-        -replace 'dir: \./state\b', "dir: $StateDir" `
-        -replace 'dir: state\b',    "dir: $StateDir" `
-        -replace '"/var/log/illumio-collector/', "`"$LogsDir\" |
+        -replace 'dir: \./logs\b',  "dir: $LogsDirYaml" `
+        -replace 'dir: logs\b',     "dir: $LogsDirYaml" `
+        -replace 'dir: \./state\b', "dir: $StateDirYaml" `
+        -replace 'dir: state\b',    "dir: $StateDirYaml" `
+        -replace '"/var/log/illumio-collector/', "`"$LogsDirYaml/" |
         Set-Content $ConfigPath -Encoding UTF8
 }
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $InstallDir "state"), `
     (Join-Path $InstallDir "logs") | Out-Null
+
+# Grant the service account write access to logs\ and state\.
+# C:\Program Files is read-only for non-admin accounts by default.
+$writeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $ServiceAccount, "Modify",
+    "ContainerInherit,ObjectInherit", "None", "Allow")
+foreach ($dir in @("state", "logs")) {
+    $acl = Get-Acl (Join-Path $InstallDir $dir)
+    $acl.AddAccessRule($writeRule)
+    Set-Acl (Join-Path $InstallDir $dir) $acl
+}
 
 # ---------- Windows service ----------
 $ServiceName = "IllumioCollector"
@@ -167,8 +182,13 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
     $Nssm = Join-Path $NssmDir "nssm-2.24\win64\nssm.exe"
 
     Write-Host "==> Registering Windows service (NSSM, account: $ServiceAccount)"
-    & $Nssm install $ServiceName $PythonExe `
-        "`"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
+    # Install with Application only; set AppParameters via registry to preserve
+    # embedded quotes for paths containing spaces (PowerShell argument escaping
+    # strips quotes when passed through nssm install/set).
+    & $Nssm install $ServiceName $PythonExe
+    $nssmKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Parameters"
+    Set-ItemProperty -Path $nssmKey -Name "AppParameters" `
+        -Value "`"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
     & $Nssm set $ServiceName AppDirectory   "$InstallDir\app"
     & $Nssm set $ServiceName DisplayName    "Illumio S3 to SIEM Collector"
     & $Nssm set $ServiceName Description    "Pull Illumio PCE logs from S3 and forward to SIEM"
