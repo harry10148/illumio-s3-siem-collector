@@ -58,3 +58,5 @@ _mem0*.py
 build/
 *.tar.gz
 *.zip
+# Vendor binaries are intentionally committed
+!vendor/**/*.zip
