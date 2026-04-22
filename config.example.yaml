@@ -5,11 +5,11 @@
 #
 # 快速決策：我要收哪些 log？
 #
-#   log_type: auditable  → PCE 稽核事件（管理操作、VEN 上下線、policy 部署）← 必收
-#   log_type: pd2        → 封鎖流量（被 policy 實際封鎖的連線）               ← 必收
-#   log_type: pd1        → 潛在封鎖（測試模式下會被封鎖的連線）               ← 建議收
-#   log_type: pd0        → 允許流量（所有允許的連線，量極大，約佔 95%+）      ← 選收
-#   log_type: pd3        → 未知流量（policy 無法判定的連線）                   ← 視需要
+#   log_type: auditable  → PCE 稽核事件（管理操作、VEN 上下線、policy 部署）      ← 必收
+#   log_type: pd2        → Blocked（policy 實際 DENY 的連線）                    ← 必收
+#   log_type: pd1        → Potentially Blocked（無 allow rule、Enforce 前仍通過） ← 建議收
+#   log_type: pd0        → Allowed（所有 allow rule 允許的連線，量極大約 95%+）   ← 選收
+#   log_type: pd3        → Unknown（Idle VEN snapshot / Flowlink 網路設備 log 等非 Enforcement 模式被動收到的流量）← 視需要
 #
 # ============================================================
 
@@ -52,7 +52,7 @@ logging:
 
 # ── Pipelines ────────────────────────────────────────────
 # 每個 pipeline 獨立拉取、獨立 checkpoint、獨立排程。
-# 最常見的配置：開 audit + pd2（稽核 + 封鎖流量）兩個 pipeline。
+# 最常見的配置：開 audit + pd2（稽核事件 + Blocked 流量）兩個 pipeline。
 pipelines:
 
   # ── [必收] 稽核事件 ───────────────────────────────────
@@ -76,7 +76,7 @@ pipelines:
       max_retries: 3               # 失敗重試 3 次
       retry_backoff_sec: [1, 2, 4] # 重試間隔（秒）
 
-  # ── [必收] 封鎖流量（pd=2）──────────────────────────
+  # ── [必收] Blocked（pd=2）────────────────────────────
   # 被 Illumio policy 實際 DENY 的流量，資安告警的核心來源
   - name: "blocked"
     enabled: true
@@ -90,9 +90,9 @@ pipelines:
       host: "siem.example.com"
       port: 6514
 
-  # ── [建議收] 潛在封鎖流量（pd=1）───────────────────
-  # 目前允許，但在 Full Enforce 模式下會被封鎖的流量（Visibility/Selective 模式下產生）
-  # 用於識別「如果切換到 Enforce 模式，哪些流量會中斷」
+  # ── [建議收] Potentially Blocked（pd=1）─────────────
+  # 沒有對應 allow rule、workload 尚未進入 Enforce 模式因此目前仍允許通過的流量。
+  # 用於識別「切換到 Enforce 模式後哪些連線會中斷」，本身並未被封鎖。
   - name: "potentially-blocked"
     enabled: false                 # 需要時改 true
     log_type: pd1                  # policy decision = 1 = PotentiallyBlocked
