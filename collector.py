@@ -34,6 +34,10 @@ def banner(cfg) -> None:
 def _sink_desc(sc) -> str:
     if sc.type == "https":
         return f"https {sc.url}"
+    if sc.type == "file":
+        return f"file {sc.path}"
+    if sc.type == "multi":
+        return "multi[" + ", ".join(_sink_desc(s) for s in sc.sinks) + "]"
     return f"{sc.type} {sc.host}:{sc.port}"
 
 
