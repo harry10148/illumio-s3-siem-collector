@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -74,7 +74,11 @@ class FilterConfig(BaseModel):
     expression: str
 
 
-class SinkConfig(BaseModel):
+# ── Sink configurations ───────────────────────────────────────────────────────
+
+class NetworkSinkConfig(BaseModel):
+    """UDP / TCP / TLS / HTTPS — forward events to a remote SIEM."""
+
     type: SinkType
     host: Optional[str] = None
     port: Optional[int] = Field(default=None, ge=1, le=65535)
@@ -93,6 +97,51 @@ class SinkConfig(BaseModel):
         if self.type == "https" and not self.url:
             raise ValueError("sink.type=https requires url")
         return self
+
+
+class FileSinkConfig(BaseModel):
+    """Write events to a local rolling log file for long-term retention."""
+
+    type: Literal["file"]
+    path: str
+    rotation_mb: int = Field(
+        default=200, ge=1,
+        description="Rotate when the active file exceeds this many MB.",
+    )
+    rotation_hours: int = Field(
+        default=24, ge=1,
+        description="Rotate when the active file has been open this many hours.",
+    )
+    retention_days: int = Field(
+        default=30, ge=1,
+        description="Delete rotated .log.gz files older than this many days.",
+    )
+    prefix: str = Field(
+        default="ILLUMIO_FLOW: ",
+        description="Prepend this string to every line (FortiSIEM Agent Log Prefix).",
+    )
+
+
+class MultiSinkConfig(BaseModel):
+    """Fan-out: deliver each event to multiple sinks simultaneously.
+
+    Returns False (stops checkpoint) only when **all** child sinks fail.
+    """
+
+    type: Literal["multi"]
+    sinks: List[SinkConfig]  # forward ref — resolved by model_rebuild() below
+
+
+# Discriminated union; Pydantic routes on the literal ``type`` field.
+# ``SinkConfig`` is a type alias (not a class) — use NetworkSinkConfig /
+# FileSinkConfig / MultiSinkConfig directly when constructing in tests.
+SinkConfig = Annotated[
+    Union[NetworkSinkConfig, FileSinkConfig, MultiSinkConfig],
+    Field(discriminator="type"),
+]
+
+# Resolve the forward reference in MultiSinkConfig.sinks.
+MultiSinkConfig.model_rebuild()
 
 
 class PipelineConfig(BaseModel):
@@ -125,7 +174,7 @@ class AppConfig(BaseModel):
 
 
 def load_config(path: str | Path) -> AppConfig:
-    p = Path(path)
+    p = Path(path).resolve()
     if not p.is_file():
         raise ConfigError(f"config file not found: {p}")
     try:
@@ -133,6 +182,16 @@ def load_config(path: str | Path) -> AppConfig:
     except yaml.YAMLError as e:
         raise ConfigError(f"YAML parse error in {p}: {e}") from e
     try:
-        return AppConfig(**(data or {}))
+        cfg = AppConfig(**(data or {}))
     except Exception as e:
         raise ConfigError(f"invalid config in {p}:\n{e}") from e
+
+    # Resolve relative dirs against the config file's directory so the service
+    # doesn't try to write into the (read-only) install directory.
+    base = p.parent
+    if not Path(cfg.logging.dir).is_absolute():
+        cfg.logging.dir = str((base / cfg.logging.dir).resolve())
+    if not Path(cfg.checkpoint.dir).is_absolute():
+        cfg.checkpoint.dir = str((base / cfg.checkpoint.dir).resolve())
+
+    return cfg

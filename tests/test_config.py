@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from core.config import AppConfig, PipelineConfig, SinkConfig, MapperConfig
+from core.config import AppConfig, PipelineConfig, NetworkSinkConfig, MapperConfig
 
 
 def minimal_pipeline_dict(**overrides):
@@ -28,7 +28,7 @@ def test_poll_interval_below_10_rejected():
 
 def test_https_sink_requires_url():
     with pytest.raises(ValidationError):
-        SinkConfig(type="https")
+        NetworkSinkConfig(type="https")
 
 
 def test_cef_mapper_requires_mapping_file():
@@ -38,9 +38,9 @@ def test_cef_mapper_requires_mapping_file():
 
 def test_udp_sink_needs_host_and_port():
     with pytest.raises(ValidationError):
-        SinkConfig(type="udp", host="x")  # missing port
+        NetworkSinkConfig(type="udp", host="x")  # missing port
     with pytest.raises(ValidationError):
-        SinkConfig(type="udp", port=514)  # missing host
+        NetworkSinkConfig(type="udp", port=514)  # missing host
 
 
 def test_log_type_must_be_known():

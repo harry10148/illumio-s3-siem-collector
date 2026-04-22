@@ -16,7 +16,7 @@ set -euo pipefail
 VERSION="${VERSION:-1.0}"
 PBS_TAG="${PBS_TAG:-20240415}"
 PY_VER="${PY_VER:-3.11.9}"
-OUT_DIR="${OUT_DIR:-$(pwd)/dist}"
+OUT_DIR="${OUT_DIR:-${REPO_ROOT}/dist}"
 PY_RUNTIME_SHA256="${PY_RUNTIME_SHA256:-78b1c16a9fd032997ba92a60f46a64f795cd18ff335659dfdf6096df277b24d5}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,7 +67,7 @@ EOF
 
 TARBALL="${OUT_DIR}/illumio-collector-linux-x86_64-v${VERSION}.tar.gz"
 tar -C "${BUILD_DIR}" -czf "${TARBALL}" bundle
-(cd "${OUT_DIR}" && sha256sum "$(basename "${TARBALL}")") > "${OUT_DIR}/SHA256SUMS-linux"
+(cd "${OUT_DIR}" && sha256sum "$(basename "${TARBALL}")") > "${OUT_DIR}/SHA256SUMS-linux.txt"
 
 echo "==> Done: ${TARBALL}"
 rm -rf "${BUILD_DIR}"

@@ -1,36 +1,57 @@
 """S3 log checker — 連線測試 / 瀏覽 / 下載工具
 
-用法：
-  # 從 config.yaml 讀 bucket / fqdn / org_id / AWS 認證
+操作摘要：
+  1. 預設不加 `--list` / `--download` 時，會做「連線測試」。
+  2. 加 `--list` 時，會列出 S3 物件。
+  3. 加 `--download` 時，會下載 S3 物件。
+  4. 參數來源優先順序：CLI 參數 > `--config` > boto3 / AWS 預設環境。
+
+必要參數規則：
+  - S3 模式必須提供 `--bucket`，或用 `--config` 載入 `source.bucket`。
+  - SQS 模式改用 `--sqs-url`，不需要 `--bucket`。
+  - 若指定 `--access-key`，則 `--secret-key` 必須一起提供。
+  - `--prefix` 的優先順序高於 `--fqdn` + `--org-id` + `--log-type`。
+
+常見操作：
+  # 1) 從 config.yaml 載入 bucket / fqdn / org_id / AWS 認證，做預設連線測試
   python s3_log_checker.py --config config.yaml
 
-  # 測試所有 log 路徑是否可存取（預設）
-  python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK>
+  # 2) 直接帶參數做預設連線測試
+  python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> \\
+      --access-key <AK> --secret-key <SK>
 
-  # 列出特定 log type 的檔案
-  python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK> \\
-      --list [--log-type auditable|pd0|pd1|pd2|pd3] [--max-keys 50]
+  # 3) 列出特定 log type 的檔案
+  python s3_log_checker.py --config config.yaml --list --log-type auditable --max-keys 50
 
-  # 列出任意 S3 路徑下的檔案
+  # 4) 列出任意 prefix 下的檔案
   python s3_log_checker.py --bucket <B> --access-key <AK> --secret-key <SK> \\
       --list --prefix "ap-scp45.illum.io/org_id=123456/auditable/"
 
-  # 下載指定單一檔案
+  # 5) 下載單一檔案
   python s3_log_checker.py --bucket <B> --access-key <AK> --secret-key <SK> \\
       --download --key "ap-scp45.illum.io/org_id=123456/auditable/2026/04/20/file.jsonl.gz" \\
-      [--out ./downloads/]
+      --out ./downloads/
 
-  # 下載特定 log type 的所有檔案
-  python s3_log_checker.py --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK> \\
-      --download --log-type auditable [--out ./downloads/]
+  # 6) 下載某個 log type 底下的全部檔案
+  python s3_log_checker.py --config config.yaml --download --log-type pd2 --out ./downloads/
 
-  # 下載任意 S3 路徑下的全部檔案
+  # 7) 下載任意 prefix 下的全部檔案
   python s3_log_checker.py --bucket <B> --access-key <AK> --secret-key <SK> \\
-      --download --prefix "ap-scp45.illum.io/org_id=123456/auditable/2026/04/20/" [--out ./downloads/]
+      --download --prefix "ap-scp45.illum.io/org_id=123456/auditable/2026/04/20/" \\
+      --out ./downloads/
+
+補充說明：
+  - `--log-type` 可用值：`auditable` / `pd0` / `pd1` / `pd2` / `pd3`
+  - `--download --prefix` 會保留 prefix 以下的相對目錄，避免同名檔案互相覆蓋。
+  - `--download --key` 下載單檔時，目的地檔名使用該 key 的 basename。
+  - `--list` 只顯示物件，不會下載檔案。
 """
 import argparse
 import os
+import socket
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path, PurePosixPath
 
 import boto3
@@ -148,6 +169,100 @@ def _download_destination(out_dir, key, prefix=None, preserve_hierarchy=False):
         parts = [PurePosixPath(key).name or "downloaded-object"]
 
     return os.path.join(out_dir, *parts)
+
+
+# ── Endpoint 探測(純網路,無需 AWS 認證)─────────────────────────────────────
+
+def _probe_bucket_region(bucket, timeout=10):
+    """匿名 HEAD 到 <bucket>.s3.amazonaws.com，從 `x-amz-bucket-region` 標頭取得 region。
+
+    回傳 (region, http_status, error_msg)；403/404 屬正常(代表網路可達 AWS)。
+    """
+    url = f"https://{bucket}.s3.amazonaws.com/"
+    req = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.headers.get("x-amz-bucket-region"), resp.status, None
+    except urllib.error.HTTPError as e:
+        region = e.headers.get("x-amz-bucket-region") if e.headers else None
+        return region, e.code, None
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        return None, None, f"網路錯誤: {reason}(防火牆可能擋 443 或 DNS 無法解析)"
+    except socket.timeout:
+        return None, None, "連線逾時(防火牆可能擋 443)"
+    except Exception as e:
+        return None, None, f"探測失敗: {e}"
+
+
+def _fqdn_candidates(bucket, region):
+    """列出 boto3 所有可能用到的 S3 endpoint 變體。
+
+    回傳 [(fqdn, 說明, is_primary)]，is_primary=True 代表 boto3 預設會走的。
+    """
+    return [
+        (f"{bucket}.s3.{region}.amazonaws.com",            "Virtual-hosted 區域(主要)", True),
+        (f"s3.{region}.amazonaws.com",                     "Path-style 區域",            True),
+        (f"{bucket}.s3.amazonaws.com",                     "初始探測 / us-east-1",       False),
+        (f"s3.amazonaws.com",                              "全域 endpoint",              False),
+        (f"{bucket}.s3-{region}.amazonaws.com",            "Legacy 連字號格式",          False),
+        (f"s3-{region}.amazonaws.com",                     "Legacy 連字號格式",          False),
+        (f"{bucket}.s3.dualstack.{region}.amazonaws.com",  "IPv6 dualstack",             False),
+        (f"s3.dualstack.{region}.amazonaws.com",           "IPv6 dualstack path-style",  False),
+    ]
+
+
+def _resolve_dns(fqdn, timeout=3):
+    """回傳 FQDN 的 A 記錄清單;失敗回 None。"""
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+    try:
+        _, _, ips = socket.gethostbyname_ex(fqdn)
+        return ips
+    except Exception:
+        return None
+    finally:
+        socket.setdefaulttimeout(old_timeout)
+
+
+def probe_and_report_fqdns(bucket):
+    """純探測:不需 AWS key,印出 region、所有候選 FQDN 與 DNS 解析結果。
+
+    回傳偵測到的 region(字串)或 None(探測失敗)。
+    """
+    print(f"\n[探測] Endpoint & FQDN 清單 (無需 AWS 認證)")
+    print("=" * 70)
+    print(f"Bucket: {bucket}")
+
+    region, status, err = _probe_bucket_region(bucket)
+    if err:
+        print(f"狀態: 【失敗】{err}")
+        print("      → 下方 FQDN 以 <REGION> 佔位,請先排除網路/DNS 問題")
+        display_region = "<REGION>"
+    else:
+        note = "(403/404 屬正常,代表網路可達 AWS)" if status in (403, 404) else ""
+        print(f"HTTP 狀態: {status} {note}")
+        print(f"偵測到 Region: {region}")
+        display_region = region
+
+    print("-" * 70)
+    print("防火牆白名單(所有可能 FQDN,★ = boto3 實際會用):")
+    print()
+    header = f"{'':<3}{'FQDN':<66} {'說明':<28} DNS (A 記錄)"
+    print(header)
+    print("-" * len(header) + "-" * 20)
+
+    for fqdn, desc, is_primary in _fqdn_candidates(bucket, display_region):
+        marker = " ★ " if is_primary else "   "
+        if display_region == "<REGION>":
+            ips_str = "(region 未知)"
+        else:
+            ips = _resolve_dns(fqdn)
+            ips_str = ", ".join(ips) if ips else "(DNS 解析失敗)"
+        print(f"{marker}{fqdn:<66} {desc:<28} {ips_str}")
+
+    print("-" * 70)
+    return region if not err else None
 
 
 # ── 測試模式 ──────────────────────────────────────────────────────────────────
@@ -291,6 +406,7 @@ def build_parser():
         epilog=__doc__,
     )
 
+    # `--config` 用來提供預設值；若同一欄位 CLI 有另外指定，CLI 會覆蓋 config。
     parser.add_argument("--config", help="讀取 config.yaml 的 aws/source 設定")
 
     # 目標：S3 bucket 或 SQS URL（二選一）
@@ -338,6 +454,7 @@ def main(argv=None):
             return 1
 
     try:
+        # 載入後的有效值規則：CLI > config.yaml。
         bucket, fqdn, org_id = _resolve_s3_source(args, config)
         profile, access_key, secret_key, region = _resolve_aws_auth(args, config)
     except ValueError as e:
@@ -351,6 +468,11 @@ def main(argv=None):
     if bool(access_key) != bool(secret_key):
         print("【錯誤】--access-key 與 --secret-key 必須同時提供。")
         return 1
+
+    # 預設測試模式:先做純網路探測(不需 AWS key),方便盤點防火牆白名單
+    is_default_test_mode = not (args.list or args.download or args.sqs_url)
+    if is_default_test_mode and bucket:
+        probe_and_report_fqdns(bucket)
 
     session = get_aws_session(profile, access_key, secret_key, region)
 

@@ -4,6 +4,15 @@
 
 - [ ] 可選：調查 pytest 預設 capture 模式在此環境的 I/O 例外，避免必須使用 `-s`
 
+### 2026-04-22 本地留存功能
+- [x] `sinks/file_sink.py`：rolling append + gzip rotation + retention cleanup
+- [x] `sinks/multi_sink.py`：fan-out，全部失敗才回傳 False
+- [x] `core/config.py`：`NetworkSinkConfig` / `FileSinkConfig` / `MultiSinkConfig` discriminated union
+- [x] `core/pipeline.py`：提取 `_build_sink` helper，加 file / multi 分支
+- [x] `tests/test_file_sink.py`：15 個 FileSink + MultiSink 測試
+- [x] `config.example.yaml`：file sink 參數完整說明 + audit-local / traffic-local / audit-dual / blocked-dual 範例
+- [x] 全 89 tests passed
+
 ---
 
 ## Done
@@ -33,11 +42,19 @@
 - [x] README 安裝後資源清單（目錄/服務/帳號）
 - [x] **Bug fix**：config.yaml 權限 600→640，service user 可讀
 
+### 2026-04-22 s3_log_checker 防火牆盤點輔助
+- [x] 新增匿名 endpoint 探測(urllib HEAD 讀 `x-amz-bucket-region`)
+- [x] 列出所有 S3 FQDN 變體(virtual-hosted / path-style / legacy hyphen / dualstack)
+- [x] 每個 FQDN 附上 DNS A 記錄(利於嚴格防火牆白名單鎖 IP)
+- [x] 預設測試模式自動先探測(不需 AWS key),--list/--download/--sqs-url 不觸發
+
 ### 2026-04-21 s3_log_checker 維護
 - [x] 修正 `--list` 上限控制與 0-byte directory marker 顯示問題
 - [x] 修正 `--download --prefix` 同名檔案互相覆蓋問題
 - [x] 新增 `--config`，可讀取 `config.yaml` 的 `aws` / `source`
 - [x] 新增回歸測試（list / download / config）
+- [x] 補充 `s3_log_checker.py` 腳本內建操作說明與參數優先順序註解
+- [x] 統一 `config.example.yaml` / `config.yaml` 的 `mapper` YAML 寫法
 
 ### 2026-04-21 code review（穩定性 / 可靠性 / 資安）
 - [x] 審查 `core/pipeline.py`、`sinks/https_sink.py`、`sources/s3_source.py` 的失敗處理與資料一致性風險

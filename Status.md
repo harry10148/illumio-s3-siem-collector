@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**v1.0 + post-release polish 完成；`s3_log_checker.py` 的 `--list` / `--download` 回歸與 `config.yaml` 支援已修正並驗證。**
+**本地留存功能完成（`FileSink` + `MultiSink`）。89 tests passed。**
 
 ## 2026-04-21 Code Review Snapshot（穩定性 / 可靠性 / 資安）
 
@@ -39,6 +39,8 @@ Illumio S3 → SIEM 收集器，從 S3 bucket 拉 PCE log 並轉發到 SIEM。
 | **PS5 相容性** | `?.Source` → PowerShell 5.x 相容寫法 |
 | **preflight 改善** | `-Config` / `--config` 選填；自動偵測 `app/config.example.yaml` |
 | **s3_log_checker 功能** | 新增 `--list`（分頁瀏覽）和 `--download`（單檔/批次下載）|
+| **s3_log_checker 文件** | 腳本頂部補齊操作手冊、模式說明與 CLI > config 優先順序 |
+| **YAML 一致性** | `config.example.yaml` / `config.yaml` 的 `mapper` 統一改為展開式區塊寫法 |
 | **Windows 安裝目錄** | 預設 `C:\illumio-collector` → `C:\Program Files\illumio-collector` |
 | **編碼修正** | install.ps1 的 `Get-Content` 加 `-Encoding UTF8`（中文不亂碼） |
 | **NSSM 引號修正** | Arguments 字串內路徑加引號（含空格的 Program Files 路徑）|
@@ -55,6 +57,8 @@ Illumio S3 → SIEM 收集器，從 S3 bucket 拉 PCE log 並轉發到 SIEM。
 | Pipeline 拓撲 | Multi-pipeline，各自獨立 checkpoint |
 | 預設格式 | `syslog_json`（RFC5424 header + 展平 JSON）|
 | 傳輸 | UDP / TCP / TLS / HTTPS；建議 TLS/6514 |
+| 本地留存 | `file` sink：rolling append + gzip rotation；`multi` sink：SIEM + file 同時 |
+| Multi sink 失敗語意 | 全部子 sink 失敗才停止 checkpoint；任一成功即繼續 |
 | Source | S3 only；SQS 抽象保留待未來 |
 | 排程 | APScheduler BlockingScheduler，每 pipeline 獨立 interval |
 | Checkpoint | JSON 檔，`last_modified` + `last_key`，atomic write |

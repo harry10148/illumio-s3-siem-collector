@@ -121,11 +121,48 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
     from mappers.cef import CefMapper
     from mappers.passthrough import PassthroughMapper
     from mappers.syslog_json import SyslogJsonMapper
+    from sinks.file_sink import FileSink
     from sinks.https_sink import HttpsSink
+    from sinks.multi_sink import MultiSink
     from sinks.tcp_sink import TcpSink
     from sinks.tls_sink import TlsSink
     from sinks.udp_sink import UdpSink
     from sources.s3_source import S3Source
+
+    def _build_sink(sc) -> Sink:
+        if sc.type == "udp":
+            return UdpSink(host=sc.host, port=sc.port, max_bytes=sc.max_bytes)
+        if sc.type == "tcp":
+            return TcpSink(host=sc.host, port=sc.port,
+                           timeout_sec=sc.timeout_sec,
+                           max_retries=sc.max_retries,
+                           retry_backoff_sec=sc.retry_backoff_sec)
+        if sc.type == "tls":
+            tls = sc.tls
+            return TlsSink(host=sc.host, port=sc.port,
+                           verify=tls.verify if tls else True,
+                           ca_file=tls.ca_file if tls else None,
+                           timeout_sec=sc.timeout_sec,
+                           max_retries=sc.max_retries,
+                           retry_backoff_sec=sc.retry_backoff_sec)
+        if sc.type == "https":
+            return HttpsSink(url=sc.url,
+                             batch_size=sc.batch_size,
+                             verify_tls=sc.tls.verify if sc.tls else True,
+                             timeout_sec=sc.timeout_sec,
+                             max_retries=sc.max_retries,
+                             retry_backoff_sec=sc.retry_backoff_sec)
+        if sc.type == "file":
+            return FileSink(
+                path=sc.path,
+                rotation_mb=sc.rotation_mb,
+                rotation_hours=sc.rotation_hours,
+                retention_days=sc.retention_days,
+                prefix=sc.prefix,
+            )
+        if sc.type == "multi":
+            return MultiSink([_build_sink(sub) for sub in sc.sinks])
+        raise ValueError(f"unknown sink type: {sc.type}")
 
     if cfg.aws.profile:
         session = boto3.Session(profile_name=cfg.aws.profile, region_name=cfg.aws.region)
@@ -178,32 +215,6 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
         else:
             raise ValueError(f"unknown mapper format: {mapper_cfg.format}")
 
-        sc = pc.sink
-        if sc.type == "udp":
-            sink = UdpSink(host=sc.host, port=sc.port, max_bytes=sc.max_bytes)
-        elif sc.type == "tcp":
-            sink = TcpSink(host=sc.host, port=sc.port,
-                           timeout_sec=sc.timeout_sec,
-                           max_retries=sc.max_retries,
-                           retry_backoff_sec=sc.retry_backoff_sec)
-        elif sc.type == "tls":
-            tls = sc.tls
-            sink = TlsSink(host=sc.host, port=sc.port,
-                           verify=tls.verify if tls else True,
-                           ca_file=tls.ca_file if tls else None,
-                           timeout_sec=sc.timeout_sec,
-                           max_retries=sc.max_retries,
-                           retry_backoff_sec=sc.retry_backoff_sec)
-        elif sc.type == "https":
-            sink = HttpsSink(url=sc.url,
-                             batch_size=sc.batch_size,
-                             verify_tls=sc.tls.verify if sc.tls else True,
-                             timeout_sec=sc.timeout_sec,
-                             max_retries=sc.max_retries,
-                             retry_backoff_sec=sc.retry_backoff_sec)
-        else:
-            raise ValueError(f"unknown sink type: {sc.type}")
-
         filter_fn = compile_expression(pc.filter.expression) if pc.filter else None
 
         pipeline = Pipeline(
@@ -211,7 +222,7 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
             log_type=pc.log_type,
             source=source,
             mapper=mapper,
-            sink=sink,
+            sink=_build_sink(pc.sink),
             checkpoint_store=store,
             filter_fn=filter_fn,
             max_files_per_tick=pc.max_files_per_tick,

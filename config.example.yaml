@@ -37,14 +37,14 @@ source:
 
 # ── Checkpoint（斷點續傳）────────────────────────────────
 checkpoint:
-  dir: "./state"                   # 每個 pipeline 一個 JSON 檔存在這裡
+  dir: ./state                     # 相對路徑會以 config.yaml 所在目錄為基準（可改為絕對路徑）
   initial_lookback_hours: 0        # 第一次啟動往回拉幾小時（0 = 只拉新資料；24 = 拉昨天到現在）
   atomic_write: true               # 先寫暫存再 rename，避免 crash 時損毀
 
 # ── 日誌 ─────────────────────────────────────────────────
 logging:
   level: INFO                      # DEBUG / INFO / WARN / ERROR
-  dir: "./logs"
+  dir: ./logs                      # 相對路徑會以 config.yaml 所在目錄為基準（可改為絕對路徑）
   file: "collector.log"
   rotate_mb: 50                    # 單檔最大 MB，超過自動 rotate
   keep_files: 7                    # 保留幾份舊檔
@@ -82,7 +82,9 @@ pipelines:
     enabled: true
     log_type: pd2                  # policy decision = 2 = Blocked
     poll_interval_sec: 60
-    mapper: { format: syslog_json, flatten: true }
+    mapper:
+      format: syslog_json
+      flatten: true
     sink:
       type: tls
       host: "siem.example.com"
@@ -95,7 +97,9 @@ pipelines:
     enabled: false                 # 需要時改 true
     log_type: pd1                  # policy decision = 1 = PotentiallyBlocked
     poll_interval_sec: 300         # 量比 pd2 大，可以拉長間隔
-    mapper: { format: syslog_json, flatten: true }
+    mapper:
+      format: syslog_json
+      flatten: true
     sink:
       type: tls
       host: "siem.example.com"
@@ -111,7 +115,9 @@ pipelines:
     filter:
       expression: "ev.dst_port in (22, 23, 3389, 445, 1433, 3306, 5432)"
       # 只收高風險 port 的允許流量（SSH/Telnet/RDP/SMB/MSSQL/MySQL/PostgreSQL）
-    mapper: { format: syslog_json, flatten: true }
+    mapper:
+      format: syslog_json
+      flatten: true
     sink:
       type: tls
       host: "siem.example.com"
@@ -137,7 +143,9 @@ pipelines:
     enabled: false
     log_type: auditable
     poll_interval_sec: 120
-    mapper: { format: json, flatten: true }     # 純 JSON，適合 HTTP receiver
+    mapper:
+      format: json                # 純 JSON，適合 HTTP receiver
+      flatten: true
     sink:
       type: https
       url: "https://siem.example.com/rawupload?vendor=Illumio&model=PCE"
@@ -149,8 +157,142 @@ pipelines:
     enabled: false
     log_type: auditable
     poll_interval_sec: 60
-    mapper: { format: syslog_json, flatten: true }
+    mapper:
+      format: syslog_json
+      flatten: true
     sink:
       type: udp
       host: "127.0.0.1"
       port: 5514                   # 注意：UDP 每則限制 1024 bytes，長訊息會被截斷
+
+# ============================================================
+# 本地留存（file sink）與雙軌模式（multi sink）
+# ============================================================
+#
+# 本地留存功能說明
+# ────────────────
+# sink.type: file 會將每筆事件以「一行一事件」格式附加到 active log 檔案中。
+# Active 檔案（例如 events.log）始終保持明文，可直接被 FortiSIEM Agent、
+# Filebeat、tail 等工具即時讀取。
+#
+# 輪替機制（達到任一條件即觸發）：
+#   1. 檔案大小超過 rotation_mb MB
+#   2. 檔案已開啟超過 rotation_hours 小時（跨重啟後仍計算真實檔案年齡）
+#
+# 輪替動作：
+#   舊檔 rename → events.<YYYYMMDDThhmmss>.log → gzip 壓縮 → events.<ts>.log.gz
+#   壓縮完成後自動刪除超過 retention_days 天的舊 .log.gz 檔案
+#
+# prefix 說明（重要）：
+#   每行會加上 prefix 字首，用於 SIEM Parser 識別。
+#   建議保持預設值 "ILLUMIO_FLOW: "（含尾部空格）。
+#
+#   FortiSIEM Agent 設定：
+#     Monitor Template → File Monitor → Log Prefix = ILLUMIO_FLOW
+#     （Agent 負責加前綴，此處 prefix 留空）或
+#     由本工具加前綴，Agent 設定 "Include keyword" 比對 ILLUMIO_FLOW
+#
+# ── [本地留存] 僅寫本地檔案，不送 SIEM ──────────────
+  - name: "audit-local"
+    enabled: false
+    log_type: auditable
+    poll_interval_sec: 300
+    mapper:
+      format: json                 # 純 JSON，保留完整欄位，適合長期留存
+      flatten: true
+    sink:
+      type: file
+      path: "/var/log/illumio-collector/audit.log"
+      #
+      # ── rotation_mb（必填，預設 200）─────────────────
+      # 單位：MB。Active 檔案超過此大小時觸發輪替。
+      # 建議：生產環境 100～500 MB；磁碟空間緊張時調低。
+      rotation_mb: 200
+      #
+      # ── rotation_hours（必填，預設 24）──────────────
+      # 單位：小時。Active 檔案開啟超過此時間觸發輪替。
+      # 重啟後仍以檔案真實 mtime 計算，不會重置計時器。
+      # 建議：24（每日輪替），配合 FortiSIEM 按日期匯入。
+      rotation_hours: 24
+      #
+      # ── retention_days（必填，預設 30）──────────────
+      # 單位：天。超過此天數的 .log.gz 自動刪除。
+      # 注意：只清理同目錄下符合命名格式 <stem>.<ts>.log.gz 的檔案。
+      retention_days: 90           # 稽核事件建議長期保留
+      #
+      # ── prefix（預設 "ILLUMIO_FLOW: "）──────────────
+      # 每行行首加上此字串。空字串 "" 則不加前綴。
+      # FortiSIEM Agent 可用 Log Prefix 設定識別此字串。
+      prefix: "ILLUMIO_FLOW: "
+
+  - name: "traffic-local"
+    enabled: false
+    log_type: pd0
+    poll_interval_sec: 300
+    mapper:
+      format: json
+      flatten: true
+    sink:
+      type: file
+      path: "/var/log/illumio-collector/traffic.log"
+      rotation_mb: 500             # 流量 log 量大，調高輪替門檻
+      rotation_hours: 24
+      retention_days: 30
+      prefix: "ILLUMIO_FLOW: "
+
+# ── [雙軌模式] SIEM 轉送 + 本地留存同時進行 ─────────
+#
+# Multi sink 說明：
+#   同時送給所有子 sink（依序呼叫，非並行）。
+#   只有當「全部子 sink 都失敗」時，才回傳失敗並停止 checkpoint 前進。
+#   即：SIEM 暫時斷線不影響本地寫入；本地磁碟寫失敗不影響 SIEM 轉送。
+#
+#   Nesting：multi sink 內可以再嵌套 multi sink（理論上不需要）。
+#
+  - name: "audit-dual"
+    enabled: false
+    log_type: auditable
+    poll_interval_sec: 60
+    mapper:
+      format: syslog_json          # SIEM 用 syslog_json；本地用相同格式便於對照
+      flatten: true
+    sink:
+      type: multi
+      sinks:
+        # 子 sink 1：TLS 轉送到 SIEM（與一般 SIEM-only 設定相同）
+        - type: tls
+          host: "siem.example.com"
+          port: 6514
+          tls:
+            verify: true
+            ca_file: null
+          timeout_sec: 10
+          max_retries: 3
+          retry_backoff_sec: [1, 2, 4]
+        # 子 sink 2：本地留存
+        - type: file
+          path: "/var/log/illumio-collector/audit.log"
+          rotation_mb: 200
+          rotation_hours: 24
+          retention_days: 90
+          prefix: "ILLUMIO_FLOW: "
+
+  - name: "blocked-dual"
+    enabled: false
+    log_type: pd2
+    poll_interval_sec: 60
+    mapper:
+      format: syslog_json
+      flatten: true
+    sink:
+      type: multi
+      sinks:
+        - type: tls
+          host: "siem.example.com"
+          port: 6514
+        - type: file
+          path: "/var/log/illumio-collector/blocked.log"
+          rotation_mb: 200
+          rotation_hours: 24
+          retention_days: 30
+          prefix: "ILLUMIO_FLOW: "
