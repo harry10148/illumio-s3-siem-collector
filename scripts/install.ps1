@@ -136,7 +136,8 @@ if (-not (Test-Path $ConfigPath)) {
         -replace 'dir: \./logs\b',  "dir: $LogsDir" `
         -replace 'dir: logs\b',     "dir: $LogsDir" `
         -replace 'dir: \./state\b', "dir: $StateDir" `
-        -replace 'dir: state\b',    "dir: $StateDir" |
+        -replace 'dir: state\b',    "dir: $StateDir" `
+        -replace '"/var/log/illumio-collector/', "`"$LogsDir\" |
         Set-Content $ConfigPath -Encoding UTF8
 }
 New-Item -ItemType Directory -Force -Path `
@@ -149,7 +150,10 @@ $ServiceName = "IllumioCollector"
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "==> Removing existing service (update)"
-    if ($existing.Status -eq "Running") { Stop-Service -Name $ServiceName -Force }
+    if ($existing.Status -in @("Running", "Paused")) {
+        sc.exe stop $ServiceName | Out-Null
+        Start-Sleep -Seconds 2
+    }
     sc.exe delete $ServiceName | Out-Null
     Start-Sleep -Seconds 1
 }
@@ -190,35 +194,19 @@ if ($NssmZip -and (Test-Path $NssmZip)) {
     Write-Host " 3. Watch logs:    Get-Content $InstallDir\logs\nssm-stdout.log -Wait"
     Write-Host "============================================================"
 } else {
-    Write-Host "==> Registering Windows service (New-Service, account: $ServiceAccount)"
-    $BinPath = "`"$PythonExe`" `"$InstallDir\app\collector.py`" --config `"$InstallDir\config.yaml`""
-    $svcParams = @{
-        Name            = $ServiceName
-        BinaryPathName  = $BinPath
-        DisplayName     = "Illumio S3 to SIEM Collector"
-        Description     = "Pull Illumio PCE logs from S3 and forward to SIEM"
-        StartupType     = "Automatic"
-    }
-    New-Service @svcParams | Out-Null
-    if ($ServiceAccount -ne "LocalSystem") {
-        if ($IsBuiltInServiceAccount) {
-            & sc.exe config $ServiceName "obj= $ServiceAccount" | Out-Null
-        } else {
-            & sc.exe config $ServiceName "obj= $ServiceAccount" "password= $ServicePassword" | Out-Null
-        }
-    }
+    Write-Error @"
+ERROR: NSSM (Non-Sucking Service Manager) is required but was not found.
 
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "Install complete.  (account: $ServiceAccount)"
-    Write-Host " Uninstall: & '$InstallDir\uninstall.ps1'"
-    Write-Host " 1. Edit config:   notepad $ConfigPath"
-    Write-Host " 2. Start service: Start-Service $ServiceName"
-    Write-Host " 3. Watch logs:    Get-Content $InstallDir\logs\collector.log -Wait"
-    if ($Mode -eq "bundle" -and -not $NssmZip) {
-        Write-Host ""
-        Write-Host " NOTE: NSSM not in bundle — stdout/stderr not auto-captured."
-        Write-Host "       Download nssm-2.24.zip from https://nssm.cc and re-run."
-    }
-    Write-Host "============================================================"
+Plain Python scripts cannot run as Windows services without a wrapper — New-Service
+will always fail with Error 1053.
+
+To fix:
+  1. Download nssm-2.24.zip (search for 'nssm 2.24 download' or get it from nssm.cc)
+  2. Place nssm-2.24.zip in the same folder as install.ps1 ($ScriptDir)
+  3. Re-run install.ps1
+
+If you built the bundle with build_offline_bundle.ps1, re-run the build on a
+machine that can reach nssm.cc so NSSM is included automatically.
+"@
+    exit 1
 }

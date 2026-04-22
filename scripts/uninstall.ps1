@@ -46,9 +46,9 @@ $ServiceName = "IllumioCollector"
 # ---------- stop and remove service ----------
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc) {
-    if ($svc.Status -eq "Running") {
+    if ($svc.Status -in @("Running", "Paused")) {
         Write-Host "==> Stopping service"
-        Stop-Service -Name $ServiceName -Force
+        sc.exe stop $ServiceName | Out-Null
         Start-Sleep -Seconds 2
     }
 
