@@ -28,10 +28,15 @@ def banner(cfg) -> None:
         print(f"  bucket:    {cfg.source.bucket}")
         print(f"  pce:       {cfg.source.fqdn} / org_id={cfg.source.org_id}")
     print(f"  pipelines: {len(cfg.pipelines)} defined, {len(enabled)} enabled")
+    sqs_mode = cfg.source.type == "sqs_s3"
     for p in enabled:
         dest = _sink_desc(p.sink)
-        print(f"    - {p.name:30s} log_type={p.log_type:9s} "
-              f"every={p.poll_interval_sec}s -> {dest}")
+        if sqs_mode:
+            print(f"    - {p.name:30s} log_type={p.log_type:9s} "
+                  f"event-driven -> {dest}")
+        else:
+            print(f"    - {p.name:30s} log_type={p.log_type:9s} "
+                  f"every={p.poll_interval_sec}s -> {dest}")
     print(f"  state:     {cfg.checkpoint.dir}")
     print(f"  log:       {cfg.logging.dir}/{cfg.logging.file} "
           f"(level={cfg.logging.level} rotate={cfg.logging.rotate_mb}MB "
@@ -95,8 +100,9 @@ def main(argv=None) -> int:
 
     if result.mode == "sqs":
         enabled = result.sqs_pipelines or []
-        print(f"  pipelines: {len(enabled)} enabled "
-              f"({', '.join(p.log_type for p in enabled)})", flush=True)
+        if not enabled:
+            print("[ERROR] no enabled pipelines", file=sys.stderr)
+            return 3
 
         if args.dry_run:
             print("[dry-run] config OK, exiting.")
