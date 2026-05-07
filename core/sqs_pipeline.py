@@ -71,6 +71,7 @@ class SqsPipeline:
                     stats["failed"] += 1
                     return False
             if sent_in_msg and not self.sink.flush():
+                stats["sent"] -= sent_in_msg
                 stats["failed"] += 1
                 self.log.error("sink flush failed")
                 return False

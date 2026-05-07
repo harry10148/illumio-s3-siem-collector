@@ -104,6 +104,9 @@ def main(argv=None) -> int:
             print("[ERROR] no enabled pipelines", file=sys.stderr)
             return 3
 
+        if args.once:
+            log.warning("--once is not supported in sqs_s3 mode; ignoring")
+
         if args.dry_run:
             print("[dry-run] config OK, exiting.")
             return 0

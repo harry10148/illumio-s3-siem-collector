@@ -112,13 +112,16 @@ class SqsS3Dispatcher:
     def _handle_message(self, msg: dict) -> None:
         body = msg.get("Body", "")
         receipt = msg["ReceiptHandle"]
-        start = time.monotonic()
-        last_extend_at = start
+        last_extend_at = time.monotonic()
+        # First check uses the initial visibility window; later checks use
+        # the extension window since each extend_call resets visibility to
+        # `visibility_extension_sec`.
+        current_window_sec = self.visibility_timeout_sec
 
         def extend_if_needed():
-            nonlocal last_extend_at
+            nonlocal last_extend_at, current_window_sec
             elapsed_since_extend = time.monotonic() - last_extend_at
-            if elapsed_since_extend >= self.visibility_timeout_sec / 2:
+            if elapsed_since_extend >= current_window_sec / 2:
                 try:
                     self.sqs.change_message_visibility(
                         QueueUrl=self.queue_url,
@@ -126,6 +129,7 @@ class SqsS3Dispatcher:
                         VisibilityTimeout=self.visibility_extension_sec,
                     )
                     last_extend_at = time.monotonic()
+                    current_window_sec = self.visibility_extension_sec
                 except Exception as e:  # noqa: BLE001
                     log.warning("change_message_visibility failed: %s", e)
 
