@@ -11,6 +11,7 @@ import gzip
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -111,6 +112,23 @@ class SqsS3Dispatcher:
     def _handle_message(self, msg: dict) -> None:
         body = msg.get("Body", "")
         receipt = msg["ReceiptHandle"]
+        start = time.monotonic()
+        last_extend_at = start
+
+        def extend_if_needed():
+            nonlocal last_extend_at
+            elapsed_since_extend = time.monotonic() - last_extend_at
+            if elapsed_since_extend >= self.visibility_timeout_sec / 2:
+                try:
+                    self.sqs.change_message_visibility(
+                        QueueUrl=self.queue_url,
+                        ReceiptHandle=receipt,
+                        VisibilityTimeout=self.visibility_extension_sec,
+                    )
+                    last_extend_at = time.monotonic()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("change_message_visibility failed: %s", e)
+
         try:
             s3_event = parse_message_body(body)
         except ValueError as e:
@@ -123,12 +141,14 @@ class SqsS3Dispatcher:
             return
         all_ok = True
         for ref in refs:
-            ok = self._handle_object(ref)
+            extend_if_needed()
+            ok = self._handle_object(ref, extend_if_needed)
+            extend_if_needed()
             all_ok = all_ok and ok
         if all_ok:
             self._delete(receipt)
 
-    def _handle_object(self, ref: S3ObjectRef) -> bool:
+    def _handle_object(self, ref: S3ObjectRef, extend_visibility=lambda: None) -> bool:
         if ref.bucket != self.bucket:
             log.error("bucket mismatch: msg=%s configured=%s; not deleting",
                       ref.bucket, self.bucket)
@@ -143,6 +163,7 @@ class SqsS3Dispatcher:
             log.info("no enabled pipeline for log_type=%s; deleting", log_type)
             return True
         try:
+            extend_visibility()
             obj = self.s3.get_object(Bucket=ref.bucket, Key=ref.key)
             raw = obj["Body"].read()
         except Exception as e:  # noqa: BLE001
@@ -153,6 +174,7 @@ class SqsS3Dispatcher:
         except OSError as e:
             log.error("gunzip failed for %s: %s; not deleting (DLQ catches)", ref.key, e)
             return False
+        extend_visibility()
         return pipeline.process(decoded)
 
     def _delete(self, receipt_handle: str) -> None:

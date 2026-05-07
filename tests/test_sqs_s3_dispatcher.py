@@ -298,3 +298,37 @@ def test_dispatcher_bucket_mismatch_keeps_message(aws_env):
     msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
                                VisibilityTimeout=1).get("Messages", [])
     assert len(msgs) == 1
+
+
+@mock_aws
+def test_dispatcher_extends_visibility_for_slow_processing(aws_env):
+    """If processing exceeds visibility_timeout/2, change_message_visibility is called."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    real_change = sqs.change_message_visibility
+    calls = []
+    def spy_change(**kwargs):
+        calls.append(kwargs)
+        return real_change(**kwargs)
+    sqs.change_message_visibility = spy_change
+
+    class SlowSink(CapturingSink):
+        def send(self, w):
+            time.sleep(0.6)
+            return super().send(w)
+    sink = SlowSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       visibility_timeout_sec=1,
+                       visibility_extension_sec=10)
+    d.consume_one_batch()
+
+    assert len(calls) >= 1
+    assert calls[0]["VisibilityTimeout"] == 10
