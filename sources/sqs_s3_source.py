@@ -14,6 +14,9 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, List
 
+from core.sqs_pipeline import SqsPipeline
+from sources.s3_source import path_to_log_type
+
 log = logging.getLogger(__name__)
 
 
@@ -52,10 +55,6 @@ def extract_s3_object_refs(s3_event: dict) -> List[S3ObjectRef]:
         if bucket and key:
             refs.append(S3ObjectRef(bucket=bucket, key=key))
     return refs
-
-
-from core.sqs_pipeline import SqsPipeline  # noqa: E402
-from sources.s3_source import path_to_log_type  # noqa: E402
 
 
 class SqsS3Dispatcher:
