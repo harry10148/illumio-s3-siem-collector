@@ -117,12 +117,15 @@ PYEOF
     "--bucket"     "${BUCKET}"
     "--fqdn"       "${FQDN}"
     "--org-id"     "${ORG_ID}"
-    "--access-key" "${AK}"
-    "--secret-key" "${SK}"
   )
   [[ -n "${REGION}" ]] && CHECKER_ARGS+=("--region" "${REGION}")
 
-  "${PYTHON}" "${APP_DIR}/s3_log_checker.py" "${CHECKER_ARGS[@]}"
+  # Pass credentials via environment variables (not CLI args) so they don't
+  # leak via /proc/<pid>/cmdline, ps auxe, or auditd execve events.
+  AWS_ACCESS_KEY_ID="${AK}" \
+  AWS_SECRET_ACCESS_KEY="${SK}" \
+  ${REGION:+AWS_DEFAULT_REGION="${REGION}"} \
+    "${PYTHON}" "${APP_DIR}/s3_log_checker.py" "${CHECKER_ARGS[@]}"
   echo ""
 fi
 

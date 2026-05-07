@@ -147,6 +147,28 @@ if (-not (Test-Path $ConfigPath)) {
         -replace '"/var/log/illumio-collector/', "`"$LogsDirYaml/" |
         Set-Content $ConfigPath -Encoding UTF8
 }
+
+# Lock down config.yaml — it contains plaintext AWS credentials.
+# Default Program Files ACL grants Authenticated Users read access; strip it.
+if (Test-Path $ConfigPath) {
+    $cfgAcl = Get-Acl $ConfigPath
+    $cfgAcl.SetAccessRuleProtection($true, $false)  # disable inheritance, drop inherited ACEs
+    foreach ($ace in @($cfgAcl.Access)) { [void]$cfgAcl.RemoveAccessRule($ace) }
+
+    $cfgAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "BUILTIN\Administrators", "FullControl", "Allow")))
+    $cfgAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "NT AUTHORITY\SYSTEM", "FullControl", "Allow")))
+
+    $svcAlreadyCovered = @("LocalSystem", "NT AUTHORITY\SYSTEM",
+                           "BUILTIN\Administrators", "Administrators") -contains $ServiceAccount
+    if (-not $svcAlreadyCovered) {
+        $cfgAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $ServiceAccount, "Read", "Allow")))
+    }
+    Set-Acl $ConfigPath $cfgAcl
+}
+
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $InstallDir "state"), `
     (Join-Path $InstallDir "logs") | Out-Null

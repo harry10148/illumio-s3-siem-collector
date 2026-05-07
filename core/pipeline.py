@@ -8,6 +8,7 @@ import time
 from typing import Callable, Optional
 
 from core.checkpoint import CheckpointStore
+from core.exceptions import CheckpointError
 from mappers.base import Mapper
 from sinks.base import Sink
 from sources.base import Source
@@ -24,6 +25,7 @@ class Pipeline:
         checkpoint_store: CheckpointStore,
         filter_fn: Optional[Callable[[dict], bool]] = None,
         max_files_per_tick: int = 1000,
+        recovery_lookback_hours: int = 24,
     ):
         self.name = name
         self.log_type = log_type
@@ -33,11 +35,23 @@ class Pipeline:
         self.checkpoint_store = checkpoint_store
         self.filter_fn = filter_fn
         self.max_files_per_tick = max_files_per_tick
+        self.recovery_lookback_hours = recovery_lookback_hours
         self.log = logging.getLogger(name)
 
     def tick(self) -> None:
         t0 = time.monotonic()
-        cp = self.checkpoint_store.load(self.name)
+        try:
+            cp = self.checkpoint_store.load(self.name)
+        except CheckpointError as e:
+            cp_path = self.checkpoint_store._path(self.name)
+            self.log.error(
+                "checkpoint corrupted at %s (%s); resetting to fresh "
+                "checkpoint with lookback=%dh",
+                cp_path, e, self.recovery_lookback_hours,
+            )
+            cp = self.checkpoint_store.fresh(
+                self.name, initial_lookback_hours=self.recovery_lookback_hours)
+            self.checkpoint_store.save(cp)
 
         stats = dict(files=0, read=0, filtered=0,
                      sent=0, failed=0, mapper_err=0)
@@ -226,6 +240,7 @@ def build_pipelines_from_config(cfg) -> list[tuple["Pipeline", int]]:
             checkpoint_store=store,
             filter_fn=filter_fn,
             max_files_per_tick=pc.max_files_per_tick,
+            recovery_lookback_hours=lookback,
         )
         result.append((pipeline, pc.poll_interval_sec))
     return result

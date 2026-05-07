@@ -29,6 +29,11 @@ def _escape_ext(value: Any) -> str:
     return s.replace("\\", "\\\\").replace("=", "\\=")
 
 
+def _escape_header(value: Any) -> str:
+    s = str(value)
+    return s.replace("\\", "\\\\").replace("|", "\\|")
+
+
 def _resolve_path(event: dict, dotted: str) -> Any:
     cur: Any = event
     for part in dotted.split("."):
@@ -103,8 +108,9 @@ class CefMapper(Mapper):
         hostname = event.get("pce_fqdn") or "-"
 
         cef_body = (
-            f"CEF:0|{self.vendor}|{self.product}|{self.version}|"
-            f"{self._signature(event)}|{self._name(event)}|"
+            f"CEF:0|{_escape_header(self.vendor)}|{_escape_header(self.product)}|"
+            f"{_escape_header(self.version)}|"
+            f"{_escape_header(self._signature(event))}|{_escape_header(self._name(event))}|"
             f"{self._severity(event)}|{self._extensions_str(event)}"
         )
 

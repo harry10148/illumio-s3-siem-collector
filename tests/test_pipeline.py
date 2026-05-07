@@ -143,6 +143,29 @@ def test_invalid_json_line_skipped(tmp_state_dir):
     assert len(sink.sent) == 2
 
 
+def test_tick_recovers_from_corrupt_checkpoint(tmp_state_dir):
+    store = CheckpointStore(tmp_state_dir)
+    # Write a corrupt JSON file at the checkpoint path before tick runs.
+    cp_path = store._path("p1")
+    cp_path.write_text("{not valid json", encoding="utf-8")
+
+    source = FakeSource([])  # yields nothing, so no S3 / file processing
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=source, mapper=FakeMapper(), sink=FakeSink(),
+        checkpoint_store=store, filter_fn=None,
+        max_files_per_tick=100, recovery_lookback_hours=12,
+    )
+    # Must not raise.
+    p.tick()
+
+    # Checkpoint was reset to a fresh state, not None.
+    cp = store.load("p1")
+    assert cp.last_modified is not None
+    assert cp.last_key is None
+    assert cp.processed_files_cumulative == 0
+
+
 def test_flush_failure_blocks_checkpoint(tmp_state_dir):
     files = [
         ("k1", _lm("2026-04-20T10:00:00+00:00"),

@@ -132,13 +132,27 @@ print(aws.get("region","") or "")
         (Join-Path $AppDir "s3_log_checker.py"),
         "--bucket",     $Bucket,
         "--fqdn",       $Fqdn,
-        "--org-id",     $OrgId,
-        "--access-key", $AK,
-        "--secret-key", $SK
+        "--org-id",     $OrgId
     )
     if ($Region) { $CheckerArgs += "--region", $Region }
 
-    & $PythonExe @CheckerArgs
+    # Pass credentials via environment variables (not CLI args) so they don't
+    # leak via Get-Process command lines or PowerShell 4104 script-block logs.
+    # Save & restore so credentials don't persist beyond this block.
+    $prevAK     = $env:AWS_ACCESS_KEY_ID
+    $prevSK     = $env:AWS_SECRET_ACCESS_KEY
+    $prevRegion = $env:AWS_DEFAULT_REGION
+    try {
+        $env:AWS_ACCESS_KEY_ID     = $AK
+        $env:AWS_SECRET_ACCESS_KEY = $SK
+        if ($Region) { $env:AWS_DEFAULT_REGION = $Region }
+
+        & $PythonExe @CheckerArgs
+    } finally {
+        $env:AWS_ACCESS_KEY_ID     = $prevAK
+        $env:AWS_SECRET_ACCESS_KEY = $prevSK
+        $env:AWS_DEFAULT_REGION    = $prevRegion
+    }
     Write-Host ""
 }
 

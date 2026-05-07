@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import yaml
+
 from mappers.cef import CefMapper
 
 REPO = Path(__file__).resolve().parent.parent
@@ -68,3 +70,29 @@ def test_cef_missing_severity_key_uses_default():
     line = m.format({"timestamp": "2026-04-20T00:00:00Z",
                      "pce_fqdn": "p", "href": "h"}).decode("utf-8")
     assert re.search(r"CEF:0\|Illumio\|PCE\|1\.0\|\S+\|[^|]+\|5\|", line)
+
+
+def test_header_pipe_is_escaped(tmp_path):
+    mapping = {
+        "cef_header": {
+            "vendor": "Illumio",
+            "product": "PCE",
+            "version": "1.0",
+            "signature_id_field": "pd",
+            "name_template": "Illumio | Audit",
+            "severity_map_default": 5,
+        },
+        "extensions": {},
+    }
+    p = tmp_path / "m.yaml"
+    p.write_text(yaml.safe_dump(mapping), encoding="utf-8")
+    m = CefMapper(log_type="pd0", mapping_path=p)
+    line = m.format({"timestamp": "2026-04-20T00:00:00Z",
+                     "pce_fqdn": "p", "pd": 0}).decode("utf-8")
+    # Name's literal '|' must be escaped as '\|'.
+    assert "Illumio \\| Audit" in line
+    # The CEF body has exactly 7 unescaped '|' separators.
+    cef_body = line.split("CEF:0|", 1)[1]
+    cef_body = "CEF:0|" + cef_body
+    unescaped_pipes = re.findall(r"(?<!\\)\|", cef_body)
+    assert len(unescaped_pipes) == 7, line
