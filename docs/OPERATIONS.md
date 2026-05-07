@@ -454,3 +454,35 @@ sudo /opt/illumio-collector/python/bin/python3 \
 - `files=0`：S3 沒有新檔案 → 正常（若 PCE 沒有新 event）
 - `files>0` 但 `sent=0`：sink 連線問題，查 log 中的 `SinkSendError`
 - `filtered=read`：filter 條件過濾掉所有事件 → 檢查 `filter.expression`
+
+## SQS source troubleshooting
+
+Symptom: messages staying in the queue and not processed.
+1. Check `collector.log` for "SQS dispatcher starting" — confirms the
+   collector is in SQS mode.
+2. Ensure the IAM role/keys have `sqs:ReceiveMessage`,
+   `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility` on the queue.
+3. Confirm `source.bucket` matches the bucket the queue receives
+   events for (the dispatcher refuses messages with a mismatched
+   bucket).
+
+Symptom: messages being deleted but no events at the SIEM.
+1. Look for "no enabled pipeline for log_type=..." in collector.log —
+   that log_type is not configured in `pipelines:`.
+2. Look for "unknown key path ..." — the S3 key prefix does not match
+   the expected Illumio layout. Likely Illumio added a new log type;
+   file an issue.
+
+Symptom: messages keep redelivering forever.
+1. Check `s3.get_object` errors in collector.log — likely permission,
+   region, or bucket-name mismatch.
+2. Check sink.send / flush errors — the SIEM endpoint may be down.
+3. Configure a DLQ on the queue with a sane `maxReceiveCount`
+   (e.g. 10) so truly poison messages move out of the main queue.
+
+Visibility timeout tuning:
+- Default `visibility_timeout_sec=60` is enough for typical objects
+  (<10 MB gzipped).
+- For larger objects or slow SIEM endpoints, raise `source.visibility_timeout_sec`
+  (e.g. 300). The dispatcher auto-extends mid-process, but a higher
+  floor avoids extension churn.

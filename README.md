@@ -363,6 +363,40 @@ python collector.py --config config.yaml
 
 > `fqdn` 和 `org_id` 是 S3 路徑的一部分：`{fqdn}/org_id={org_id}/auditable/...`，填錯會找不到檔案。
 
+### SQS-based S3 mode (event-driven)
+
+The collector can consume SNS-wrapped S3 ObjectCreated events from an
+Illumio-provisioned SQS queue, downloading objects on demand instead of
+polling.
+
+- One SQS queue per Illumio tenant (typical name
+  `illumio-flow-<region>-<id>`); receives events for all log types in
+  the bucket.
+- The collector dispatches each message by S3 key path to the matching
+  per-log_type pipeline (auditable / pd0 / pd1 / pd2 / pd3).
+- Lower latency and lower S3 list cost than polling; events arrive
+  within seconds of being written to S3.
+- Requires `sqs:ReceiveMessage`, `sqs:DeleteMessage`,
+  `sqs:ChangeMessageVisibility` on the queue, plus existing
+  `s3:GetObject` on the bucket.
+- Switch modes by setting `source.type: sqs_s3` in `config.yaml` (see
+  the commented block in `config.example.yaml` for the full schema).
+  In SQS mode, `pipelines.*.poll_interval_sec` and
+  `max_files_per_tick` are ignored.
+
+#### At-least-once semantics and DLQ
+
+- Processing failures (S3 fetch error, sink failure, gunzip error)
+  leave the SQS message intact so SQS will redeliver. **Configure a
+  redrive policy + DLQ on the queue** so permanent failures (e.g.
+  truly corrupt objects) move out of the main queue after N attempts.
+- Messages with key paths that do not match any known Illumio log
+  type are deleted with a WARNING log (avoids poisoning the queue).
+- Messages whose log type has no enabled pipeline in `config.yaml`
+  are deleted with an INFO log.
+- During slow processing, the dispatcher calls
+  `change_message_visibility` so SQS does not redeliver mid-processing.
+
 ### `checkpoint` 區塊
 
 | 參數 | 預設 | 說明 |
@@ -716,7 +750,7 @@ sudo /opt/illumio-collector/python/bin/python3 \
 
 > **安全提示**：`--access-key` / `--secret-key` 會讓 AWS 金鑰出現在 `ps`、`/proc/<pid>/cmdline`、auditd execve、PowerShell 4104 logs。**正式環境請改用 `--config` 或環境變數**（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`），boto3 會自動讀取。`scripts/preflight.sh` 與 `preflight.ps1` 已改用環境變數。
 
-> `s3_log_checker.py` 另支援 `--sqs-url`，**僅用於診斷使用者既有 SQS 佇列的存取權限**；collector 本身只透過 generic S3 polling 抓檔（`sources/s3_source.py` 使用 `list_objects_v2`），目前不支援 SQS source。`docs/S3 Bucket Collection Mechanisms.md`(Illumio 規格) 描述 generic 與 SQS 兩種模式,本 collector 僅實作 generic。
+> `s3_log_checker.py` 另支援 `--sqs-url`，**用途獨立於主 collector**：僅測試對既有 SQS 佇列的接收權限（`sqs:ReceiveMessage` 等），並不會啟動完整 pipeline。主 collector 現已支援 SQS 模式：在 `config.yaml` 設定 `source.type: sqs_s3`（schema 見 `config.example.yaml` 註解區塊），即可改用事件驅動的 SQS 抓檔，不再走 `list_objects_v2` 輪詢。`docs/S3 Bucket Collection Mechanisms.md`（Illumio 規格）所述的 generic 與 SQS 兩種模式皆已實作。
 
 ### 手動跑一次 pipeline（不啟動排程）
 
