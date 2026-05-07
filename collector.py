@@ -18,7 +18,15 @@ def banner(cfg) -> None:
     enabled = [p for p in cfg.pipelines if p.enabled]
     print("=" * 72)
     print("Illumio S3 -> SIEM Collector v1.0")
-    print(f"  config:    {cfg.source.bucket} / {cfg.source.fqdn} / org_id={cfg.source.org_id}")
+    if cfg.source.type == "sqs_s3":
+        queue_url = cfg.source.queue_url or ""
+        print(f"  source:    sqs_s3 (queue: ...{queue_url[-32:]})")
+        print(f"  bucket:    {cfg.source.bucket}")
+        print(f"  pce:       {cfg.source.fqdn} / org_id={cfg.source.org_id}")
+    else:
+        print(f"  source:    s3")
+        print(f"  bucket:    {cfg.source.bucket}")
+        print(f"  pce:       {cfg.source.fqdn} / org_id={cfg.source.org_id}")
     print(f"  pipelines: {len(cfg.pipelines)} defined, {len(enabled)} enabled")
     for p in enabled:
         dest = _sink_desc(p.sink)
@@ -59,32 +67,60 @@ def main(argv=None) -> int:
     setup_logging(cfg.logging)
     banner(cfg)
 
-    if args.dry_run:
-        print("[dry-run] config OK, exiting.")
-        return 0
-
     result = build_pipelines_from_config(cfg)
-    if result.mode != "polling":
-        raise NotImplementedError(
-            f"source mode {result.mode} not yet wired up in collector")
-    pipelines = result.polling
-    if not pipelines:
-        print("[ERROR] no enabled pipelines", file=sys.stderr)
-        return 3
 
-    if args.once:
-        match = [p for p, _interval in pipelines if p.name == args.once]
-        if not match:
-            print(f"[ERROR] pipeline '{args.once}' not enabled", file=sys.stderr)
-            return 4
-        log.info("running pipeline %s once", args.once)
-        match[0].tick()
-        match[0].sink.close()
+    if result.mode == "polling":
+        pipelines = result.polling
+        if not pipelines:
+            print("[ERROR] no enabled pipelines", file=sys.stderr)
+            return 3
+
+        if args.dry_run:
+            print("[dry-run] config OK, exiting.")
+            return 0
+
+        if args.once:
+            match = [p for p, _interval in pipelines if p.name == args.once]
+            if not match:
+                print(f"[ERROR] pipeline '{args.once}' not enabled", file=sys.stderr)
+                return 4
+            log.info("running pipeline %s once", args.once)
+            match[0].tick()
+            match[0].sink.close()
+            return 0
+
+        scheduler = PipelineScheduler(pipelines)
+        scheduler.run_forever()
         return 0
 
-    scheduler = PipelineScheduler(pipelines)
-    scheduler.run_forever()
-    return 0
+    if result.mode == "sqs":
+        enabled = result.sqs_pipelines or []
+        print(f"  pipelines: {len(enabled)} enabled "
+              f"({', '.join(p.log_type for p in enabled)})", flush=True)
+
+        if args.dry_run:
+            print("[dry-run] config OK, exiting.")
+            return 0
+
+        import signal
+        dispatcher = result.sqs_dispatcher
+
+        def _handle_sigterm(signum, frame):
+            dispatcher.request_stop()
+
+        signal.signal(signal.SIGTERM, _handle_sigterm)
+        signal.signal(signal.SIGINT, _handle_sigterm)
+        try:
+            dispatcher.run_forever()
+        finally:
+            for sp in (result.sqs_pipelines or []):
+                try:
+                    sp.sink.close()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("failed to close sink for %s: %s", sp.name, e)
+        return 0
+
+    raise ValueError(f"unknown source mode: {result.mode}")
 
 
 if __name__ == "__main__":
