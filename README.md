@@ -2,7 +2,8 @@
 
 Pull Illumio PCE logs (auditable events, traffic summaries) from an AWS S3
 bucket, convert them to Syslog-JSON / CEF / JSON, and forward them to a SIEM
-over UDP / TCP / TLS / HTTPS.
+(UDP / TCP / TLS / HTTPS) or write to a local rolling file (FortiSIEM Agent /
+Filebeat-friendly).
 
 - **Multi-pipeline** — each log type can go to a different destination with its own poll interval, format, and filter.
 - **Built-in scheduler** (APScheduler) — no external cron / Task Scheduler.
@@ -370,6 +371,8 @@ python collector.py --config config.yaml
 | `initial_lookback_hours` | `0` | 第一次啟動往回拉幾小時（0 = 只拉新資料） |
 | `atomic_write` | `true` | 先寫暫存再 rename，防止 crash 時損毀 |
 
+> Checkpoint JSON 若損毀（部分寫入、手動誤改），`Pipeline.tick()` 會偵測並自動以 `initial_lookback_hours` 為起點重置 checkpoint（`core/pipeline.py:43-54`），寫入 ERROR log 但不會卡死。手動刪檔仍然可行。
+
 ### `pipelines` 區塊
 
 | 欄位 | 必填 | 預設 | 說明 |
@@ -382,7 +385,7 @@ python collector.py --config config.yaml
 | `filter.expression` | | — | 事件過濾條件 |
 | `mapper.format` | | `syslog_json` | 輸出格式 |
 | `mapper.flatten` | | `true` | 展平巢狀 JSON（SIEM 需要 true） |
-| `sink.type` | ✅ | — | `tls` / `tcp` / `udp` / `https` |
+| `sink.type` | ✅ | — | `tls` / `tcp` / `udp` / `https` / `file` / `multi` |
 
 #### `sink.type` — 傳輸方式
 
@@ -394,6 +397,8 @@ python collector.py --config config.yaml
 | `tcp` | 內部網路，不需加密，SIEM 不支援 TLS 時 | 1470 |
 | `udp` | 同網段、對效能要求高、可接受掉包 | 514 |
 | `https` | SIEM 有 HTTP rawupload API（如 Splunk HEC、Elastic） | 443 |
+| `file` | 寫入本地 rolling log 檔（預設 `ILLUMIO_FLOW:` prefix），由 FortiSIEM Agent / Filebeat 監看；size + age 雙重 rotation，gzip 保留 N 天。範例見 `config.example.yaml` | — |
+| `multi` | Fan-out 至多個子 sink（**any-success** 語意：任一子 sink 成功即視為成功）。範例見 `config.example.yaml` | — |
 
 ---
 
@@ -528,7 +533,7 @@ Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 
 正常運作時每個 pipeline 每次 tick 會輸出一行：
 ```
-tick: files=12 read=847 sent=847 filtered=0 failed=0 checkpoint=...20260420_abc.jsonl.gz duration=2.31s
+tick: files=12 read=847 sent=847 filtered=0 failed=0 mapper_err=0 checkpoint=...20260420_abc.jsonl.gz duration=2.31s
 ```
 
 | 欄位 | 說明 |
@@ -538,6 +543,7 @@ tick: files=12 read=847 sent=847 filtered=0 failed=0 checkpoint=...20260420_abc.
 | `sent` | 成功送出幾則事件 |
 | `filtered` | 被 filter 排除幾則 |
 | `failed` | sink 送出失敗幾則 |
+| `mapper_err` | JSON parse 失敗或 mapper.format() 例外的事件數 |
 
 ### 啟動 / 停止 / 重啟
 
@@ -707,6 +713,10 @@ sudo /opt/illumio-collector/python/bin/python3 \
   /opt/illumio-collector/app/s3_log_checker.py \
   --bucket <B> --fqdn <F> --org-id <ID> --access-key <AK> --secret-key <SK>
 ```
+
+> **安全提示**：`--access-key` / `--secret-key` 會讓 AWS 金鑰出現在 `ps`、`/proc/<pid>/cmdline`、auditd execve、PowerShell 4104 logs。**正式環境請改用 `--config` 或環境變數**（`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`），boto3 會自動讀取。`scripts/preflight.sh` 與 `preflight.ps1` 已改用環境變數。
+
+> `s3_log_checker.py` 另支援 `--sqs-url`，**僅用於診斷使用者既有 SQS 佇列的存取權限**；collector 本身只透過 generic S3 polling 抓檔（`sources/s3_source.py` 使用 `list_objects_v2`），目前不支援 SQS source。`docs/S3 Bucket Collection Mechanisms.md`(Illumio 規格) 描述 generic 與 SQS 兩種模式,本 collector 僅實作 generic。
 
 ### 手動跑一次 pipeline（不啟動排程）
 

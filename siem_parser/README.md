@@ -17,6 +17,14 @@ syslog-wrapped JSON messages produced by `illumio_s3_collector`.
 3. Set **Enabled = Yes**
 4. Click **Apply** to push to collectors
 
+## 安裝後檔案位置
+
+- Linux:`/opt/illumio-collector/app/siem_parser/*.xml`
+- Windows:`C:\Program Files\illumio-collector\app\siem_parser\*.xml`
+  (若 install.ps1 以 `-InstallDir` 自訂,則為 `<InstallDir>\app\siem_parser\`)
+
+將對應的 XML 檔上傳到 FortiSIEM Admin → Device Support → Parsers。
+
 ## Verify
 
 After the collector starts forwarding events:

@@ -39,6 +39,8 @@ source:
 checkpoint:
   dir: ./state                     # 相對路徑會以 config.yaml 所在目錄為基準（可改為絕對路徑）
   initial_lookback_hours: 0        # 第一次啟動往回拉幾小時（0 = 只拉新資料；24 = 拉昨天到現在）
+                                   # 同時用於 checkpoint JSON 損毀後的自動恢復起點
+                                   # （core/pipeline.py:43-54）。
   atomic_write: true               # 先寫暫存再 rename，避免 crash 時損毀
 
 # ── 日誌 ─────────────────────────────────────────────────
@@ -151,6 +153,14 @@ pipelines:
       url: "https://siem.example.com/rawupload?vendor=Illumio&model=PCE"
       batch_size: 100              # 累積 100 筆再一次送出
       timeout_sec: 10
+      max_retries: 3
+      retry_backoff_sec: [1, 2, 4]
+      # tls:
+      #   verify: true                # 預設 true。設 false 僅供測試環境。
+      #   ca_file: /path/to/ca.pem    # 自簽憑證鏈。
+      # 行為：當所有重試耗盡仍失敗時，sink 會清空批次 buffer 並回傳 False，
+      # pipeline 不前進 checkpoint，下一輪 tick 會從 S3 重讀同一檔案重送
+      # （at-least-once 語意，可能在批次邊界產生重複）。
 
   # ── [測試用] UDP（本機 nc -lu 5514 接收）────────────
   - name: "test-udp"
@@ -164,6 +174,9 @@ pipelines:
       type: udp
       host: "127.0.0.1"
       port: 5514                   # 注意：UDP 每則限制 1024 bytes，長訊息會被截斷
+      # max_bytes: 8192 (預設) — 單一 UDP datagram 最大 byte 數，超出截斷。
+      # 常見值：1024（老 syslog 設備）/ 8192 / 65535。
+      # 註：tcp/tls sink 無此欄位（串流協定不需要切割上限）。
 
 # ============================================================
 # 本地留存（file sink）與雙軌模式（multi sink）

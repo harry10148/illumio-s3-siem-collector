@@ -118,8 +118,10 @@ notepad config.yaml    # 填入 AWS 認證 + SIEM IP/port
 
 # 5. 啟動
 Start-Service IllumioCollector
-Get-Content C:\illumio-collector\logs\collector.log -Wait
+Get-Content "C:\Program Files\illumio-collector\logs\collector.log" -Wait
 ```
+
+> **Windows 路徑說明：** 以下文件中的 `C:\Program Files\illumio-collector\` 為 `install.ps1` 的預設安裝路徑（`$env:ProgramFiles\illumio-collector`）。若安裝時以 `-InstallDir <path>` 自訂路徑，請將文件中的 `C:\Program Files\illumio-collector` 替換為自訂值。注意含空白的路徑在 PowerShell 中需以雙引號包住。
 
 > **更新（git clone 模式）：** `git pull` 後重新執行 `install.sh` / `install.ps1` 即可覆蓋新程式碼，config 和 checkpoint 不受影響。
 
@@ -187,12 +189,12 @@ sudo systemctl status illumio-collector
 #### Windows
 
 ```powershell
-notepad C:\illumio-collector\config.yaml
+notepad "C:\Program Files\illumio-collector\config.yaml"
 
 # 驗證設定
-C:\illumio-collector\python\python.exe `
-  C:\illumio-collector\app\collector.py `
-  --config C:\illumio-collector\config.yaml --dry-run
+& "C:\Program Files\illumio-collector\python\python.exe" `
+  "C:\Program Files\illumio-collector\app\collector.py" `
+  --config "C:\Program Files\illumio-collector\config.yaml" --dry-run
 
 # 啟動服務
 Start-Service IllumioCollector
@@ -235,7 +237,7 @@ tail -f /var/log/illumio-collector/collector.log
 正常運作時每個 pipeline 每次 tick 會輸出一行：
 
 ```
-tick: files=12 read=847 sent=847 filtered=0 failed=0 \
+tick: files=12 read=847 sent=847 filtered=0 failed=0 mapper_err=0 \
       checkpoint=...20260420_abc.jsonl.gz duration=2.31s
 ```
 
@@ -246,6 +248,7 @@ tick: files=12 read=847 sent=847 filtered=0 failed=0 \
 | `sent` | 成功送出幾則事件 |
 | `filtered` | 被 filter 條件排除幾則 |
 | `failed` | sink 送出失敗幾則 |
+| `mapper_err` | mapper 轉換或 JSON 解析失敗的事件數 |
 | `checkpoint` | 目前指到哪個 S3 檔案 |
 
 ### 啟動 / 停止 / 重啟
@@ -400,8 +403,8 @@ sudo bash scripts/uninstall.sh --purge
 
 | 路徑 | 內容 |
 |---|---|
-| `C:\illumio-collector\config.yaml` | 設定檔 |
-| `C:\illumio-collector\state\` | Checkpoint 檔 |
+| `C:\Program Files\illumio-collector\config.yaml` | 設定檔 |
+| `C:\Program Files\illumio-collector\state\` | Checkpoint 檔 |
 
 ---
 
