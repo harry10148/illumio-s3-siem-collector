@@ -1,5 +1,5 @@
 # Development / test dependencies
 -r requirements.txt
 pytest>=7.4
-moto[s3]>=5.0
+moto[s3,sqs]>=5.0
 responses>=0.25
