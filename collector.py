@@ -63,7 +63,11 @@ def main(argv=None) -> int:
         print("[dry-run] config OK, exiting.")
         return 0
 
-    pipelines = build_pipelines_from_config(cfg)
+    result = build_pipelines_from_config(cfg)
+    if result.mode != "polling":
+        raise NotImplementedError(
+            f"source mode {result.mode} not yet wired up in collector")
+    pipelines = result.polling
     if not pipelines:
         print("[ERROR] no enabled pipelines", file=sys.stderr)
         return 3

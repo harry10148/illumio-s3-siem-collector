@@ -257,3 +257,30 @@ def test_end_to_end_with_moto(tmp_state_dir):
         sink.sent.clear()
         p.tick()
         assert sink.sent == []
+
+
+def test_factory_returns_polling_for_s3_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    cfg_text = f"""
+aws: {{ region: us-east-1, access_key: x, secret_key: y }}
+source: {{ type: s3, bucket: b, fqdn: pce.example.com, org_id: '1' }}
+checkpoint: {{ dir: {tmp_path}/state, initial_lookback_hours: 24 }}
+logging: {{ dir: {tmp_path}/logs, level: INFO }}
+pipelines:
+  - name: a
+    enabled: true
+    log_type: auditable
+    poll_interval_sec: 60
+    mapper: {{ format: json }}
+    sink: {{ type: file, path: {tmp_path}/x.log }}
+"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(cfg_text)
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    cfg = load_config(str(p))
+    result = build_pipelines_from_config(cfg)
+    assert result.mode == "polling"
+    assert result.polling is not None
+    assert len(result.polling) == 1
