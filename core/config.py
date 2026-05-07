@@ -33,11 +33,31 @@ class AwsConfig(BaseModel):
         return self
 
 
-class SourceConfig(BaseModel):
+class S3SourceConfig(BaseModel):
     type: Literal["s3"] = "s3"
     bucket: str
     fqdn: str
     org_id: str
+
+
+class SqsS3SourceConfig(BaseModel):
+    type: Literal["sqs_s3"] = "sqs_s3"
+    queue_url: str
+    bucket: str
+    fqdn: str
+    org_id: str
+    visibility_timeout_sec: int = 60
+    visibility_extension_sec: int = 60
+    wait_time_sec: int = 20
+    max_messages_per_receive: int = 10
+    max_workers: int = 1
+
+
+# Discriminated union; Pydantic routes on the literal ``type`` field.
+SourceConfig = Annotated[
+    Union[S3SourceConfig, SqsS3SourceConfig],
+    Field(discriminator="type"),
+]
 
 
 class CheckpointConfig(BaseModel):
