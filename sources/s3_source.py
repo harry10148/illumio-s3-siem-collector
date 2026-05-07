@@ -30,6 +30,23 @@ _LOG_TYPE_PATH = {
 }
 
 
+def path_to_log_type(key: str, fqdn: str, org_id: str) -> Optional[str]:
+    """Reverse-lookup log_type from an S3 object key.
+
+    Returns the log_type if `key` starts with the expected
+    `{fqdn}/org_id={org_id}/<sub_path>/...` for any value in `_LOG_TYPE_PATH`,
+    else None.
+    """
+    expected_root = f"{fqdn}/org_id={org_id}/"
+    if not key.startswith(expected_root):
+        return None
+    remainder = key[len(expected_root):]
+    for log_type, sub_path in _LOG_TYPE_PATH.items():
+        if remainder.startswith(sub_path + "/"):
+            return log_type
+    return None
+
+
 class S3Source(Source):
     def __init__(
         self,

@@ -103,3 +103,25 @@ def test_tie_break_on_same_lastmodified(s3_env):
     results = list(src.iter_new_files("auditable", cp))
     assert len(results) == 1
     assert results[0][0] == objs[1]["Key"]
+
+
+def test_path_to_log_type_resolves_known_paths():
+    from sources.s3_source import path_to_log_type
+    fqdn = "pce.example.com"
+    org_id = "123"
+    cases = {
+        "pce.example.com/org_id=123/auditable/2026/05/07/x.json.gz": "auditable",
+        "pce.example.com/org_id=123/summaries/pd=0/2026/05/07/x.json.gz": "pd0",
+        "pce.example.com/org_id=123/summaries/pd=1/2026/05/07/x.json.gz": "pd1",
+        "pce.example.com/org_id=123/summaries/pd=2/2026/05/07/x.json.gz": "pd2",
+        "pce.example.com/org_id=123/summaries/pd=3/2026/05/07/x.json.gz": "pd3",
+    }
+    for key, expected in cases.items():
+        assert path_to_log_type(key, fqdn, org_id) == expected
+
+
+def test_path_to_log_type_unknown_returns_none():
+    from sources.s3_source import path_to_log_type
+    assert path_to_log_type("pce.example.com/org_id=123/foo/x", "pce.example.com", "123") is None
+    assert path_to_log_type("other/org_id=123/auditable/x", "pce.example.com", "123") is None
+    assert path_to_log_type("pce.example.com/org_id=999/auditable/x", "pce.example.com", "123") is None
