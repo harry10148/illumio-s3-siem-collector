@@ -332,3 +332,56 @@ def test_dispatcher_extends_visibility_for_slow_processing(aws_env):
 
     assert len(calls) >= 1
     assert calls[0]["VisibilityTimeout"] == 10
+
+
+@mock_aws
+def test_dispatcher_stops_immediately_when_event_set_first(aws_env):
+    """request_stop() before run_forever returns promptly without processing."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    d.request_stop()
+    start = time.monotonic()
+    d.run_forever()
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"run_forever should return promptly, took {elapsed:.2f}s"
+
+
+@mock_aws
+def test_dispatcher_finishes_in_flight_message_before_stop(aws_env):
+    """A stop signal arriving mid-process does not abandon the current message."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    captured = []
+    holder = {}
+
+    class StopperSink:
+        def send(self, w):
+            captured.append(w)
+            holder["d"].request_stop()
+            return True
+        def flush(self): return True
+        def close(self): pass
+
+    sink = StopperSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    holder["d"] = d
+    d.run_forever()
+
+    # Message was processed (sink saw it) and deleted (in-flight finished)
+    assert len(captured) == 1
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    assert msgs == []
