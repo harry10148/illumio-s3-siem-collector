@@ -14,6 +14,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, List
+from urllib.parse import unquote_plus
 
 from core.sqs_pipeline import SqsPipeline
 from sources.s3_source import path_to_log_type
@@ -47,14 +48,21 @@ def parse_message_body(body: str) -> dict:
 
 
 def extract_s3_object_refs(s3_event: dict) -> List[S3ObjectRef]:
-    """Return one S3ObjectRef per Records entry. Empty list on TestEvent etc."""
+    """Return one S3ObjectRef per Records entry whose eventSource is aws:s3.
+
+    Empty list on s3:TestEvent or non-S3 events (e.g. lifecycle, replication).
+    S3 keys are URL-decoded — AWS encodes spaces as '+' and special chars
+    as '%XX' in the event payload, but s3.get_object expects the raw key.
+    """
     refs: List[S3ObjectRef] = []
     for rec in s3_event.get("Records") or []:
+        if rec.get("eventSource") != "aws:s3":
+            continue
         s3 = rec.get("s3") or {}
         bucket = (s3.get("bucket") or {}).get("name")
         key = (s3.get("object") or {}).get("key")
         if bucket and key:
-            refs.append(S3ObjectRef(bucket=bucket, key=key))
+            refs.append(S3ObjectRef(bucket=bucket, key=unquote_plus(key)))
     return refs
 
 

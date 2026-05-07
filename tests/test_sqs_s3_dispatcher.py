@@ -17,7 +17,10 @@ def _sns_wrap(s3_event: dict) -> str:
 
 
 def _s3_event(bucket: str, key: str) -> dict:
-    return {"Records": [{"s3": {"bucket": {"name": bucket}, "object": {"key": key}}}]}
+    return {"Records": [{
+        "eventSource": "aws:s3",
+        "s3": {"bucket": {"name": bucket}, "object": {"key": key}},
+    }]}
 
 
 def test_parse_sns_wrapped_message():
@@ -46,8 +49,8 @@ def test_extract_refs_single():
 def test_extract_refs_multiple_records():
     """Some S3 events batch multiple object creations in one Records array."""
     s3_event = {"Records": [
-        {"s3": {"bucket": {"name": "b"}, "object": {"key": "k1"}}},
-        {"s3": {"bucket": {"name": "b"}, "object": {"key": "k2"}}},
+        {"eventSource": "aws:s3", "s3": {"bucket": {"name": "b"}, "object": {"key": "k1"}}},
+        {"eventSource": "aws:s3", "s3": {"bucket": {"name": "b"}, "object": {"key": "k2"}}},
     ]}
     refs = extract_s3_object_refs(s3_event)
     assert len(refs) == 2
@@ -58,6 +61,29 @@ def test_extract_refs_no_records_returns_empty():
     """S3 sometimes sends s3:TestEvent which has no Records array."""
     refs = extract_s3_object_refs({"Service": "Amazon S3", "Event": "s3:TestEvent"})
     assert refs == []
+
+
+def test_extract_refs_skips_non_s3_event_source():
+    """Records without eventSource=aws:s3 (e.g. lifecycle, replication) are dropped."""
+    s3_event = {"Records": [
+        {"eventSource": "aws:s3", "s3": {"bucket": {"name": "b"}, "object": {"key": "k1"}}},
+        {"eventSource": "aws:lambda", "s3": {"bucket": {"name": "b"}, "object": {"key": "k2"}}},
+        {"s3": {"bucket": {"name": "b"}, "object": {"key": "k3"}}},  # no eventSource at all
+    ]}
+    refs = extract_s3_object_refs(s3_event)
+    assert len(refs) == 1
+    assert refs[0].key == "k1"
+
+
+def test_extract_refs_url_decodes_keys():
+    """AWS URL-encodes object keys in event payloads (spaces -> '+', special -> %XX);
+    we must decode so s3.get_object receives the actual key."""
+    s3_event = {"Records": [
+        {"eventSource": "aws:s3", "s3": {"bucket": {"name": "b"},
+         "object": {"key": "pce/org_id=1/auditable/2026-05-08+12%3A00%3A00.json.gz"}}},
+    ]}
+    refs = extract_s3_object_refs(s3_event)
+    assert refs[0].key == "pce/org_id=1/auditable/2026-05-08 12:00:00.json.gz"
 
 
 import gzip
