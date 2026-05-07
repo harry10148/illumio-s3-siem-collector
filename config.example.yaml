@@ -35,6 +35,33 @@ source:
   fqdn: "your-pce.illum.io"                              # PCE FQDN，原廠文件提供
   org_id: "123456"                                      # PCE Org ID，純數字
 
+# ─────────────────────────────────────────────────────────────────────
+# 替代來源模式：SQS 事件驅動（Event-driven）。
+#
+# 取消註解以下 source 區塊「並註解掉」上方的 source: { type: s3, ... } 區塊
+# 以切換模式。來源模式互斥（collector 根據 source.type 選擇一個執行）。
+#
+# 當 Illumio 已為你的 tenant 配置 SQS 隊列時使用此模式
+#（典型隊列名稱：illumio-flow-<region>-<id>）。
+# 單一隊列接收整個 bucket 的 S3 ObjectCreated 事件；
+# collector 會根據 S3 key path 派遣到相應 log_type pipeline。
+# ─────────────────────────────────────────────────────────────────────
+# source:
+#   type: sqs_s3
+#   queue_url: https://sqs.<region>.amazonaws.com/<account>/<queue-name>
+#   bucket: <same as Illumio bucket>
+#   fqdn:   <pce fqdn>
+#   org_id: "<org id>"
+#   # 可選參數（預設值如下）：
+#   # visibility_timeout_sec: 60
+#   # visibility_extension_sec: 60
+#   # wait_time_sec: 20
+#   # max_messages_per_receive: 10
+#   # max_workers: 1
+#
+# 在 SQS 模式下，pipelines.*.poll_interval_sec 和 max_files_per_tick
+# 會被忽略——dispatcher 是事件驅動的。
+
 # ── Checkpoint（斷點續傳）────────────────────────────────
 checkpoint:
   dir: ./state                     # 相對路徑會以 config.yaml 所在目錄為基準（可改為絕對路徑）
