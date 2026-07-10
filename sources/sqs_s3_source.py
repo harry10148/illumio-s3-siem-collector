@@ -217,7 +217,7 @@ class SqsS3Dispatcher:
             return False
         extend_visibility()
         ok = pipeline.process(decoded, on_progress=extend_visibility)
-        if ok:
+        if ok and self.reconcile_interval_sec:
             self._processed_keys[ref.key] = time.monotonic()
         return ok
 

@@ -581,3 +581,29 @@ def test_reconcile_skips_keys_already_processed_via_queue(aws_env):
     assert len(sink.sent) == 1
     d._reconcile()                 # must NOT process it again
     assert len(sink.sent) == 1
+
+
+@mock_aws
+def test_processed_keys_not_recorded_when_reconciliation_disabled(aws_env):
+    """When reconcile_interval_sec=0, _processed_keys should remain empty.
+    This prevents unbounded memory growth when reconciliation is disabled."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/2026/05/07/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}, {"a": 2}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+
+    d = SqsS3Dispatcher(
+        sqs_client=sqs, s3_client=s3,
+        queue_url=qurl, bucket="test-bucket",
+        fqdn="pce.example.com", org_id="1",
+        pipelines=[pipeline],
+        wait_time_sec=0, max_messages_per_receive=10,
+        reconcile_interval_sec=0)  # Explicitly disabled
+    d.consume_one_batch()
+
+    assert len(sink.sent) == 2
+    assert d._processed_keys == {}  # Should be empty, not containing the key
