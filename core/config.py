@@ -61,6 +61,15 @@ class SqsS3SourceConfig(BaseModel):
         description="Delete a message after this many receives (poison guard "
                     "when the queue has no DLQ). 0 disables.",
     )
+    reconcile_interval_sec: int = Field(
+        default=3600, ge=0,
+        description="Sweep S3 for objects the queue never delivered every N "
+                    "seconds. 0 disables.",
+    )
+    reconcile_window_sec: int = Field(
+        default=7200, ge=600,
+        description="How far back the reconcile sweep looks.",
+    )
 
 
 # Discriminated union; Pydantic routes on the literal ``type`` field.

@@ -89,6 +89,7 @@ def test_extract_refs_url_decodes_keys():
 import gzip
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from moto import mock_aws
@@ -531,3 +532,52 @@ def test_dispatcher_heartbeat_logged(aws_env, caplog):
         d.request_stop()
         t.join(timeout=5)
     assert any("heartbeat" in r.getMessage() for r in caplog.records)
+
+
+@mock_aws
+def test_reconcile_processes_object_missed_by_queue(aws_env):
+    """An object that never produced an SQS message is picked up by the sweep."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    now = datetime.now(timezone.utc)
+    key = f"pce.example.com/org_id=1/auditable/{now:%Y%m%d}_missed.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    # Deliberately NO SQS message — simulates SNS delivery loss.
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       reconcile_interval_sec=3600,
+                       reconcile_window_sec=7200,
+                       reconcile_safety_lag_sec=0)
+    d._started_at_wall = now - timedelta(hours=1)
+    d._reconcile()
+    assert len(sink.sent) == 1
+
+
+@mock_aws
+def test_reconcile_skips_keys_already_processed_via_queue(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    now = datetime.now(timezone.utc)
+    key = f"pce.example.com/org_id=1/auditable/{now:%Y%m%d}_x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       reconcile_interval_sec=3600,
+                       reconcile_window_sec=7200,
+                       reconcile_safety_lag_sec=0)
+    d._started_at_wall = now - timedelta(hours=1)
+    d.consume_one_batch()          # processed via queue; key recorded
+    assert len(sink.sent) == 1
+    d._reconcile()                 # must NOT process it again
+    assert len(sink.sent) == 1

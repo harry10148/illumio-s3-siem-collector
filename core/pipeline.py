@@ -294,6 +294,8 @@ def _build_sqs(cfg, session) -> "BuildResult":
         max_messages_per_receive=cfg.source.max_messages_per_receive,
         max_workers=cfg.source.max_workers,
         poison_receive_count=cfg.source.poison_receive_count,
+        reconcile_interval_sec=cfg.source.reconcile_interval_sec,
+        reconcile_window_sec=cfg.source.reconcile_window_sec,
     )
     return BuildResult(mode="sqs", sqs_dispatcher=dispatcher,
                        sqs_pipelines=sqs_pipelines)

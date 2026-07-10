@@ -30,6 +30,13 @@ _LOG_TYPE_PATH = {
 }
 
 
+def base_prefix(fqdn: str, org_id: str, log_type: str) -> str:
+    """S3 key prefix for a log_type: {fqdn}/org_id={org_id}/<sub_path>/."""
+    if log_type not in _LOG_TYPE_PATH:
+        raise SourceError(f"unknown log_type: {log_type}")
+    return f"{fqdn}/org_id={org_id}/{_LOG_TYPE_PATH[log_type]}/"
+
+
 def path_to_log_type(key: str, fqdn: str, org_id: str) -> Optional[str]:
     """Reverse-lookup log_type from an S3 object key.
 
@@ -71,9 +78,7 @@ class S3Source(Source):
         return self._today_override or datetime.now(timezone.utc)
 
     def _base_prefix(self, log_type: str) -> str:
-        if log_type not in _LOG_TYPE_PATH:
-            raise SourceError(f"unknown log_type: {log_type}")
-        return f"{self.fqdn}/org_id={self.org_id}/{_LOG_TYPE_PATH[log_type]}/"
+        return base_prefix(self.fqdn, self.org_id, log_type)
 
     def _scan_date_prefixes(self, base: str, checkpoint: Checkpoint) -> List[str]:
         today = self._today()

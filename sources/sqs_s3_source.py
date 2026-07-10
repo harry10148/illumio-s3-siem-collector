@@ -13,11 +13,12 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from urllib.parse import unquote_plus
 
 from core.sqs_pipeline import SqsPipeline
-from sources.s3_source import path_to_log_type
+from sources.s3_source import base_prefix, path_to_log_type
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ class SqsS3Dispatcher:
         max_workers: int = 1,
         poison_receive_count: int = 10,
         heartbeat_interval_sec: int = 300,
+        reconcile_interval_sec: int = 0,
+        reconcile_window_sec: int = 7200,
+        reconcile_safety_lag_sec: int = 300,
     ):
         self.sqs = sqs_client
         self.s3 = s3_client
@@ -102,11 +106,17 @@ class SqsS3Dispatcher:
         self.max_messages_per_receive = max_messages_per_receive
         self.poison_receive_count = poison_receive_count
         self.heartbeat_interval_sec = heartbeat_interval_sec
+        self.reconcile_interval_sec = reconcile_interval_sec
+        self.reconcile_window_sec = reconcile_window_sec
+        self.reconcile_safety_lag_sec = reconcile_safety_lag_sec
         if max_workers != 1:
             log.warning("max_workers=%d requested, but only 1 is supported "
                         "in this version; falling back to 1", max_workers)
         self._by_log_type: Dict[str, SqsPipeline] = {p.log_type: p for p in pipelines}
         self._stop_event = threading.Event()
+        self._processed_keys: Dict[str, float] = {}
+        self._started_at_wall: Optional[datetime] = None
+        self._last_reconcile = time.monotonic()
 
     def consume_one_batch(self) -> int:
         """Run one receive_message cycle and process its messages. Returns count."""
@@ -206,7 +216,10 @@ class SqsS3Dispatcher:
             log.error("gunzip failed for %s: %s; not deleting (DLQ catches)", ref.key, e)
             return False
         extend_visibility()
-        return pipeline.process(decoded, on_progress=extend_visibility)
+        ok = pipeline.process(decoded, on_progress=extend_visibility)
+        if ok:
+            self._processed_keys[ref.key] = time.monotonic()
+        return ok
 
     def _delete(self, receipt_handle: str) -> None:
         try:
@@ -227,9 +240,53 @@ class SqsS3Dispatcher:
         except Exception as e:  # noqa: BLE001
             log.warning("could not inspect queue RedrivePolicy: %s", e)
 
+    def _reconcile(self) -> None:
+        """Sweep recent S3 objects and process any the queue never delivered.
+
+        Only objects created after process start are considered, so restarts
+        never cause duplicate forwarding from this path.
+        """
+        now_mono = time.monotonic()
+        for k, t in list(self._processed_keys.items()):
+            if now_mono - t > self.reconcile_window_sec:
+                del self._processed_keys[k]
+
+        now = datetime.now(timezone.utc)
+        low = now - timedelta(seconds=self.reconcile_window_sec)
+        if self._started_at_wall and self._started_at_wall > low:
+            low = self._started_at_wall
+        high = now - timedelta(seconds=self.reconcile_safety_lag_sec)
+        if low >= high:
+            return
+
+        missed = 0
+        for log_type in self._by_log_type:
+            prefix_root = base_prefix(self.fqdn, self.org_id, log_type)
+            day = low.date()
+            while day <= high.date():
+                prefix = f"{prefix_root}{day.strftime('%Y%m%d')}_"
+                paginator = self.s3.get_paginator("list_objects_v2")
+                for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                    for obj in page.get("Contents", []) or []:
+                        if not (low < obj["LastModified"] <= high):
+                            continue
+                        if obj["Key"] in self._processed_keys:
+                            continue
+                        log.warning("reconcile: %s never arrived via SQS; "
+                                    "processing directly", obj["Key"])
+                        if self._handle_object(
+                                S3ObjectRef(bucket=self.bucket, key=obj["Key"])):
+                            missed += 1
+                day += timedelta(days=1)
+        if missed:
+            log.warning("reconcile: recovered %d missed objects", missed)
+        else:
+            log.info("reconcile: no missed objects")
+
     def run_forever(self) -> None:
         log.info("SQS dispatcher starting, queue=...%s", self.queue_url[-32:])
         self._warn_if_no_dlq()
+        self._started_at_wall = datetime.now(timezone.utc)
         batches = 0
         messages = 0
         last_heartbeat = time.monotonic()
@@ -238,6 +295,11 @@ class SqsS3Dispatcher:
                 n = self.consume_one_batch()
                 batches += 1
                 messages += n
+                if (self.reconcile_interval_sec
+                        and time.monotonic() - self._last_reconcile
+                        >= self.reconcile_interval_sec):
+                    self._reconcile()
+                    self._last_reconcile = time.monotonic()
             except Exception as e:  # noqa: BLE001
                 log.exception("consume batch failed: %s", e)
                 self._stop_event.wait(timeout=5)
