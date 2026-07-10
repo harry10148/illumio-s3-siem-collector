@@ -59,7 +59,8 @@ class SqsS3SourceConfig(BaseModel):
     poison_receive_count: int = Field(
         default=10, ge=0,
         description="Delete a message after this many receives (poison guard "
-                    "when the queue has no DLQ). 0 disables.",
+                    "when the queue has no DLQ). Only applies to non-retryable "
+                    "failures; sink failures never trigger it. 0 disables.",
     )
     reconcile_interval_sec: int = Field(
         default=3600, ge=0,

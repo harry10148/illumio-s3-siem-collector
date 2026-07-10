@@ -22,6 +22,11 @@ from sources.s3_source import base_prefix, path_to_log_type
 
 log = logging.getLogger(__name__)
 
+# _handle_object outcome classification.
+OK = "ok"
+RETRYABLE = "retryable"
+PERMANENT = "permanent"
+
 
 @dataclass(frozen=True)
 class S3ObjectRef:
@@ -141,12 +146,7 @@ class SqsS3Dispatcher:
             receive_count = int(attrs.get("ApproximateReceiveCount", "1"))
         except ValueError:
             receive_count = 1
-        if self.poison_receive_count and receive_count >= self.poison_receive_count:
-            log.error("poison message: received %d times (threshold %d); "
-                      "deleting. body starts with: %.500r",
-                      receive_count, self.poison_receive_count, body)
-            self._delete(receipt)
-            return
+        poison = bool(self.poison_receive_count and receive_count >= self.poison_receive_count)
         # The visibility clock started when the batch was received, not when
         # this message's turn came up in the serial loop.
         last_extend_at = received_at if received_at is not None else time.monotonic()
@@ -173,53 +173,71 @@ class SqsS3Dispatcher:
         try:
             s3_event = parse_message_body(body)
         except ValueError as e:
-            log.error("malformed SQS message; not deleting (DLQ will catch): %s", e)
+            if poison:
+                log.error("poison message: malformed body, received %d times "
+                          "(threshold %d); deleting. body starts with: %.500r",
+                          receive_count, self.poison_receive_count, body)
+                self._delete(receipt)
+            else:
+                log.error("malformed SQS message; not deleting (DLQ will catch): %s", e)
             return
         refs = extract_s3_object_refs(s3_event)
         if not refs:
             log.info("non-S3 notification (e.g. s3:TestEvent); deleting")
             self._delete(receipt)
             return
-        all_ok = True
+        outcomes = []
         for ref in refs:
             extend_if_needed()
-            ok = self._handle_object(ref, extend_if_needed)
+            outcomes.append(self._handle_object(ref, extend_if_needed))
             extend_if_needed()
-            all_ok = all_ok and ok
-        if all_ok:
+        if all(o == OK for o in outcomes):
+            self._delete(receipt)
+            return
+        if any(o == RETRYABLE for o in outcomes):
+            if poison:
+                log.warning("receive count %d >= threshold %d but failure is "
+                            "retryable (downstream outage); not deleting",
+                            receive_count, self.poison_receive_count)
+            return
+        # Only PERMANENT (and possibly OK) outcomes remain.
+        if poison:
+            log.error("poison message: received %d times (threshold %d); "
+                      "deleting. refs=%s", receive_count, self.poison_receive_count,
+                      [ref.key for ref in refs])
             self._delete(receipt)
 
-    def _handle_object(self, ref: S3ObjectRef, extend_visibility=lambda: None) -> bool:
+    def _handle_object(self, ref: S3ObjectRef, extend_visibility=lambda: None) -> str:
         if ref.bucket != self.bucket:
             log.error("bucket mismatch: msg=%s configured=%s; not deleting",
                       ref.bucket, self.bucket)
-            return False
+            return PERMANENT
         log_type = path_to_log_type(ref.key, self.fqdn, self.org_id)
         if log_type is None:
             log.warning("unknown key path %s; deleting (no Illumio log_type matches)",
                         ref.key)
-            return True
+            return OK
         pipeline = self._by_log_type.get(log_type)
         if pipeline is None:
             log.info("no enabled pipeline for log_type=%s; deleting", log_type)
-            return True
+            return OK
         try:
             extend_visibility()
             obj = self.s3.get_object(Bucket=ref.bucket, Key=ref.key)
             raw = obj["Body"].read()
         except Exception as e:  # noqa: BLE001
             log.error("s3 get_object failed for %s: %s; not deleting", ref.key, e)
-            return False
+            return RETRYABLE
         try:
             decoded = gzip.decompress(raw)
         except OSError as e:
             log.error("gunzip failed for %s: %s; not deleting (DLQ catches)", ref.key, e)
-            return False
+            return PERMANENT
         extend_visibility()
         ok = pipeline.process(decoded, on_progress=extend_visibility)
         if ok and self.reconcile_interval_sec:
             self._processed_keys[ref.key] = time.monotonic()
-        return ok
+        return OK if ok else RETRYABLE
 
     def _delete(self, receipt_handle: str) -> None:
         try:
@@ -275,7 +293,7 @@ class SqsS3Dispatcher:
                         log.warning("reconcile: %s never arrived via SQS; "
                                     "processing directly", obj["Key"])
                         if self._handle_object(
-                                S3ObjectRef(bucket=self.bucket, key=obj["Key"])):
+                                S3ObjectRef(bucket=self.bucket, key=obj["Key"])) == OK:
                             missed += 1
                 day += timedelta(days=1)
         if missed:
