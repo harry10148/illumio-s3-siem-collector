@@ -146,12 +146,14 @@ def _build_sink(sc) -> Sink:
     from sinks.udp_sink import UdpSink
 
     if sc.type == "udp":
-        return UdpSink(host=sc.host, port=sc.port, max_bytes=sc.max_bytes)
+        max_bytes = sc.max_bytes if sc.max_bytes is not None else 8192
+        return UdpSink(host=sc.host, port=sc.port, max_bytes=max_bytes)
     if sc.type == "tcp":
         return TcpSink(host=sc.host, port=sc.port,
                        timeout_sec=sc.timeout_sec,
                        max_retries=sc.max_retries,
-                       retry_backoff_sec=sc.retry_backoff_sec)
+                       retry_backoff_sec=sc.retry_backoff_sec,
+                       max_bytes=sc.max_bytes or 0)
     if sc.type == "tls":
         tls = sc.tls
         return TlsSink(host=sc.host, port=sc.port,
@@ -159,7 +161,8 @@ def _build_sink(sc) -> Sink:
                        ca_file=tls.ca_file if tls else None,
                        timeout_sec=sc.timeout_sec,
                        max_retries=sc.max_retries,
-                       retry_backoff_sec=sc.retry_backoff_sec)
+                       retry_backoff_sec=sc.retry_backoff_sec,
+                       max_bytes=sc.max_bytes or 0)
     if sc.type == "https":
         return HttpsSink(url=sc.url,
                          batch_size=sc.batch_size,

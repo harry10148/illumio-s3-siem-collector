@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from sinks.tcp_sink import TcpSink, _truncate_if_needed
+from sinks.tcp_sink import TcpSink
 
 
 @pytest.fixture
@@ -76,11 +76,16 @@ def test_tcp_connect_failure_returns_false():
     sink.close()
 
 
-def test_tcp_truncates_over_8192():
+def test_tcp_no_truncation_by_default():
+    sink = TcpSink(host="127.0.0.1", port=1)
     big = b"A" * 10000
-    out, warned = _truncate_if_needed(big)
+    assert sink._truncate_if_needed(big) == big
+
+
+def test_tcp_truncates_when_max_bytes_set():
+    sink = TcpSink(host="127.0.0.1", port=1, max_bytes=8192)
+    out = sink._truncate_if_needed(b"A" * 10000)
     assert len(out) == 8192
-    assert warned
 
 
 def test_tcp_socket_keepalive_tuned(tcp_listener):

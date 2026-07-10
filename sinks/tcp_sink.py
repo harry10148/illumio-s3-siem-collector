@@ -12,7 +12,6 @@ from sinks.base import Sink
 
 log = logging.getLogger(__name__)
 
-_TCP_MAX = 8192
 _KEEPIDLE_SEC = 30
 _KEEPINTVL_SEC = 10
 _KEEPCNT = 3
@@ -32,13 +31,6 @@ def _tune_keepalive(sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, _USER_TIMEOUT_MS)
 
 
-def _truncate_if_needed(wire: bytes) -> tuple[bytes, bool]:
-    if len(wire) > _TCP_MAX:
-        log.warning("TCP payload %d > %d bytes; truncating", len(wire), _TCP_MAX)
-        return wire[:_TCP_MAX], True
-    return wire, False
-
-
 class TcpSink(Sink):
     def __init__(
         self,
@@ -47,12 +39,14 @@ class TcpSink(Sink):
         timeout_sec: int = 10,
         max_retries: int = 3,
         retry_backoff_sec: Optional[List[float]] = None,
+        max_bytes: int = 0,
     ):
         self.host = host
         self.port = port
         self.timeout = timeout_sec
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff_sec if retry_backoff_sec is not None else [1, 2, 4]
+        self.max_bytes = max_bytes
         self.sock: Optional[socket.socket] = None
 
     def _connect(self) -> socket.socket:
@@ -86,8 +80,16 @@ class TcpSink(Sink):
         except OSError:
             return True
 
+    def _truncate_if_needed(self, wire: bytes) -> bytes:
+        if self.max_bytes and len(wire) > self.max_bytes:
+            log.warning("TCP payload %d > max_bytes=%d; truncating "
+                        "(the truncated event will not parse as JSON)",
+                        len(wire), self.max_bytes)
+            return wire[:self.max_bytes]
+        return wire
+
     def send(self, wire: bytes) -> bool:
-        wire, _ = _truncate_if_needed(wire)
+        wire = self._truncate_if_needed(wire)
         frame = wire + b"\n"
 
         attempts = 0

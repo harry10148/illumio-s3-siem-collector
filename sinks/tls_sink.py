@@ -18,10 +18,12 @@ class TlsSink(TcpSink):
         timeout_sec: int = 10,
         max_retries: int = 3,
         retry_backoff_sec: Optional[List[float]] = None,
+        max_bytes: int = 0,
     ):
         super().__init__(host=host, port=port, timeout_sec=timeout_sec,
                          max_retries=max_retries,
-                         retry_backoff_sec=retry_backoff_sec)
+                         retry_backoff_sec=retry_backoff_sec,
+                         max_bytes=max_bytes)
         self.verify = verify
         self.ca_file = ca_file
 

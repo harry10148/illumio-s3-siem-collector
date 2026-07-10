@@ -127,7 +127,11 @@ class NetworkSinkConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0)
     retry_backoff_sec: List[float] = [1, 2, 4]
     batch_size: int = Field(default=100, ge=1)
-    max_bytes: int = Field(default=8192, ge=0)
+    max_bytes: Optional[int] = Field(
+        default=None, ge=0,
+        description="Max payload bytes before truncation. None = per-type "
+                    "default: udp 8192, tcp/tls 0 (no truncation).",
+    )
 
     @model_validator(mode="after")
     def _type_requirements(self):
