@@ -61,9 +61,9 @@ class FileSink(Sink):
     # ── public interface ──────────────────────────────────────────────────────
 
     def send(self, wire: bytes) -> bool:
-        self._ensure_open()
         line = self._prefix + wire.rstrip(b"\n") + b"\n"
         try:
+            self._ensure_open()
             self._fh.write(line)
             self._size += len(line)
         except OSError as exc:

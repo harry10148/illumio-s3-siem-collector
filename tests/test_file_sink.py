@@ -258,3 +258,18 @@ def test_flush_fsyncs_when_enabled(tmp_path, monkeypatch):
     assert sink.flush() is True
     sink.close()
     assert len(fsynced) >= 1
+
+
+def test_send_returns_false_when_lazy_open_fails(tmp_path):
+    """send() must return False when _ensure_open() fails, not raise OSError."""
+    # Create a regular file where the directory should be
+    obstruction = tmp_path / "obstruction"
+    obstruction.touch()
+
+    # Now try to use a path whose parent is this regular file
+    p = obstruction / "events.log"
+    sink = FileSink(str(p), prefix="")
+
+    # send() should catch OSError from mkdir/open and return False
+    result = sink.send(b"test")
+    assert result is False
