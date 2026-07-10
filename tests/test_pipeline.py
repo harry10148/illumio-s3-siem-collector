@@ -384,3 +384,17 @@ def test_factory_does_not_touch_checkpoint_files(tmp_path, monkeypatch):
     from core.pipeline import build_pipelines_from_config
     build_pipelines_from_config(load_config(str(p)))
     assert list((tmp_path / "state").glob("*.json")) == []
+
+
+def test_boto_clients_use_standard_retries(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    result = build_pipelines_from_config(load_config(str(p)))
+    s3_client = result.polling[0][0].source.s3
+    assert s3_client.meta.config.retries["mode"] == "standard"
+    assert s3_client.meta.config.read_timeout == 70
+    assert s3_client.meta.config.connect_timeout == 10

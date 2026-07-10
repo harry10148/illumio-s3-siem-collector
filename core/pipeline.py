@@ -142,6 +142,15 @@ class Pipeline:
 
 # ---- factory ----------------------------------------------------------------
 
+def _boto_config():
+    from botocore.config import Config as BotoConfig
+    return BotoConfig(
+        retries={"mode": "standard", "max_attempts": 5},
+        connect_timeout=10,
+        read_timeout=70,  # must exceed the SQS long-poll wait (20s)
+    )
+
+
 def _build_sink(sc) -> Sink:
     from sinks.file_sink import FileSink
     from sinks.https_sink import HttpsSink
@@ -240,7 +249,7 @@ def _build_session(cfg):
 def _build_polling(cfg, session) -> "BuildResult":
     from sources.s3_source import S3Source
 
-    s3_client = session.client("s3")
+    s3_client = session.client("s3", config=_boto_config())
     source = S3Source(
         bucket=cfg.source.bucket,
         fqdn=cfg.source.fqdn,
@@ -279,8 +288,8 @@ def _build_sqs(cfg, session) -> "BuildResult":
     from core.sqs_pipeline import SqsPipeline
     from sources.sqs_s3_source import SqsS3Dispatcher
 
-    sqs_client = session.client("sqs")
-    s3_client = session.client("s3")
+    sqs_client = session.client("sqs", config=_boto_config())
+    s3_client = session.client("s3", config=_boto_config())
     sqs_pipelines: list = []
     for pc in cfg.pipelines:
         if not pc.enabled:
