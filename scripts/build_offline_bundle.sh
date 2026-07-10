@@ -34,12 +34,14 @@ echo "${PY_RUNTIME_SHA256}  ${BUNDLE}/python-runtime.tar.gz" | sha256sum -c -
 echo "==> Downloading wheels for manylinux2014_x86_64 / py3.11"
 # Use whatever python3 is available — the --python-version flag controls
 # which wheels are downloaded, not which Python runs this script.
+REQ_FILE="${REPO_ROOT}/requirements.txt"
+[ -f "${REPO_ROOT}/requirements.lock" ] && REQ_FILE="${REPO_ROOT}/requirements.lock"
 python3 -m pip download \
   --only-binary=:all: \
   --platform manylinux2014_x86_64 \
   --python-version 3.11 --implementation cp --abi cp311 \
   -d "${BUNDLE}/wheels" \
-  -r "${REPO_ROOT}/requirements.txt"
+  -r "${REQ_FILE}"
 
 echo "==> Copying application code"
 cp -r \
@@ -49,6 +51,7 @@ cp -r \
   "${REPO_ROOT}/sinks" "${REPO_ROOT}/mappings" \
   "${REPO_ROOT}/siem_parser" "${REPO_ROOT}/tests" "${REPO_ROOT}/docs" \
   "${REPO_ROOT}/requirements.txt" \
+  "${REPO_ROOT}/requirements.lock" \
   "${REPO_ROOT}/config.example.yaml" \
   "${REPO_ROOT}/README.md" \
   "${BUNDLE}/app/"

@@ -62,7 +62,7 @@ if [[ "${MODE}" == "bundle" ]]; then
   [[ -f "${BUNDLE_DIR}/uninstall.sh" ]] && \
     install -m 0755 "${BUNDLE_DIR}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
 else
-  for item in collector.py s3_log_checker.py core sources mappers sinks mappings siem_parser requirements.txt config.example.yaml; do
+  for item in collector.py s3_log_checker.py core sources mappers sinks mappings siem_parser requirements.txt requirements.lock config.example.yaml; do
     cp -r "${REPO_ROOT}/${item}" "${INSTALL_DIR}/app/"
   done
   [[ -f "${REPO_ROOT}/scripts/uninstall.sh" ]] && \
@@ -79,6 +79,11 @@ installed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
 # ---------- Python runtime + dependencies ----------
+REQ_FILE="${INSTALL_DIR}/app/requirements.txt"
+if [ -f "${INSTALL_DIR}/app/requirements.lock" ]; then
+  REQ_FILE="${INSTALL_DIR}/app/requirements.lock"
+fi
+
 if [[ "${MODE}" == "bundle" ]]; then
   if [[ ! -d "${INSTALL_DIR}/python" ]]; then
     echo "==> Extract portable Python runtime"
@@ -89,7 +94,7 @@ if [[ "${MODE}" == "bundle" ]]; then
   "${PYTHON}" -m pip install \
     --no-index \
     --find-links="${INSTALL_DIR}/wheels" \
-    -r "${INSTALL_DIR}/app/requirements.txt"
+    -r "${REQ_FILE}"
 else
   command -v python3 >/dev/null 2>&1 || { echo "python3 not found — install it first." >&2; exit 1; }
   if [[ ! -d "${INSTALL_DIR}/venv" ]]; then
@@ -99,7 +104,7 @@ else
   PYTHON="${INSTALL_DIR}/venv/bin/python3"
   echo "==> Install dependencies"
   "${PYTHON}" -m pip install --upgrade pip -q
-  "${PYTHON}" -m pip install -r "${INSTALL_DIR}/app/requirements.txt" -q
+  "${PYTHON}" -m pip install -r "${REQ_FILE}" -q
 fi
 
 # ---------- config ----------
