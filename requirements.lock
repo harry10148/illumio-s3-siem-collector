@@ -1,20 +1,23 @@
+# Locked dependency versions for reproducible deploys.
+# Resolved for Python >= 3.9 (repo's declared floor) using uv:
+#   uv pip compile requirements.txt --python-version 3.9 --no-header --no-annotate -o requirements.lock
 annotated-types==0.7.0
-APScheduler==3.11.3
-boto3==1.43.45
-botocore==1.43.45
+apscheduler==3.11.3
+boto3==1.42.97
+botocore==1.42.97
 certifi==2026.6.17
 charset-normalizer==3.4.9
 idna==3.18
 jmespath==1.1.0
 pydantic==2.13.4
-pydantic_core==2.46.4
+pydantic-core==2.46.4
 python-dateutil==2.9.0.post0
-PyYAML==6.0.3
-requests==2.34.2
-s3transfer==0.19.0
+pyyaml==6.0.3
+requests==2.32.5
+s3transfer==0.16.1
 simpleeval==0.9.13
 six==1.17.0
+typing-extensions==4.16.0
 typing-inspection==0.4.2
-typing_extensions==4.16.0
-tzlocal==5.4.4
-urllib3==2.7.0
+tzlocal==5.3.1
+urllib3==1.26.20
