@@ -1,6 +1,6 @@
 import gzip
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.checkpoint import Checkpoint, CheckpointStore
 from core.pipeline import Pipeline
@@ -166,6 +166,22 @@ def test_tick_recovers_from_corrupt_checkpoint(tmp_state_dir):
     assert cp.processed_files_cumulative == 0
 
 
+def test_tick_initializes_missing_checkpoint_with_lookback(tmp_state_dir):
+    """First tick with no checkpoint file must create one honoring the lookback."""
+    store = CheckpointStore(tmp_state_dir)
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource([]), mapper=FakeMapper(), sink=FakeSink(),
+        checkpoint_store=store, filter_fn=None,
+        max_files_per_tick=100, recovery_lookback_hours=12,
+    )
+    p.tick()
+    cp = store.load("p1")
+    assert cp.last_modified is not None
+    age_h = (datetime.now(timezone.utc) - cp.last_modified).total_seconds() / 3600
+    assert 11.9 < age_h < 12.1
+
+
 def test_flush_failure_blocks_checkpoint(tmp_state_dir):
     files = [
         ("k1", _lm("2026-04-20T10:00:00+00:00"),
@@ -284,3 +300,46 @@ pipelines:
     assert result.mode == "polling"
     assert result.polling is not None
     assert len(result.polling) == 1
+
+
+def _factory_cfg_text(tmp_path):
+    return f"""
+aws: {{ region: us-east-1, access_key: x, secret_key: y }}
+source: {{ type: s3, bucket: b, fqdn: pce.example.com, org_id: '1' }}
+checkpoint: {{ dir: {tmp_path}/state, initial_lookback_hours: 24 }}
+logging: {{ dir: {tmp_path}/logs, level: INFO }}
+pipelines:
+  - name: a
+    enabled: true
+    log_type: auditable
+    poll_interval_sec: 60
+    mapper: {{ format: json }}
+    sink: {{ type: file, path: {tmp_path}/x.log }}
+"""
+
+
+def test_factory_survives_corrupt_checkpoint(tmp_path, monkeypatch):
+    """Startup must not crash-loop on a corrupt checkpoint file."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "a.json").write_text("{not valid json", encoding="utf-8")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    result = build_pipelines_from_config(load_config(str(p)))  # must not raise
+    assert result.mode == "polling"
+
+
+def test_factory_does_not_touch_checkpoint_files(tmp_path, monkeypatch):
+    """build must be side-effect free w.r.t. checkpoints (dry-run safety)."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    build_pipelines_from_config(load_config(str(p)))
+    assert list((tmp_path / "state").glob("*.json")) == []

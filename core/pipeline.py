@@ -62,6 +62,12 @@ class Pipeline:
             cp = self.checkpoint_store.fresh(
                 self.name, initial_lookback_hours=self.recovery_lookback_hours)
             self.checkpoint_store.save(cp)
+        if cp.last_modified is None:
+            cp = self.checkpoint_store.fresh(
+                self.name, initial_lookback_hours=self.recovery_lookback_hours)
+            self.checkpoint_store.save(cp)
+            self.log.info("initialized fresh checkpoint with lookback=%dh",
+                          self.recovery_lookback_hours)
 
         stats = dict(files=0, read=0, filtered=0,
                      sent=0, failed=0, mapper_err=0)
@@ -240,8 +246,6 @@ def _build_polling(cfg, session) -> "BuildResult":
     for pc in cfg.pipelines:
         if not pc.enabled:
             continue
-        if store.load(pc.name).last_modified is None:
-            store.save(store.fresh(pc.name, lookback))
 
         mapper = _build_mapper(pc.mapper, pc.log_type)
         filter_fn = _build_filter(pc.filter)
