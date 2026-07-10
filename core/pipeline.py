@@ -179,7 +179,7 @@ def _build_sink(sc) -> Sink:
             prefix=sc.prefix,
         )
     if sc.type == "multi":
-        return MultiSink([_build_sink(sub) for sub in sc.sinks])
+        return MultiSink([_build_sink(sub) for sub in sc.sinks], require=sc.require)
     raise ValueError(f"unknown sink type: {sc.type}")
 
 

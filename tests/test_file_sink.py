@@ -197,3 +197,27 @@ def test_multi_close_tolerates_exception():
 
     ms = MultiSink([_BrokenSink()])
     ms.close()  # must not raise
+
+
+def test_multi_require_all_fails_on_partial_failure():
+    ms = MultiSink([_OkSink(), _FailSink()], require="all")
+    assert ms.send(b"x") is False
+    assert ms.flush() is False
+
+
+def test_multi_require_all_ok_when_all_ok():
+    ms = MultiSink([_OkSink(), _OkSink()], require="all")
+    assert ms.send(b"x") is True
+
+
+def test_multi_sink_config_require_field():
+    from core.config import PipelineConfig
+    pc = PipelineConfig(**{
+        "name": "dual", "log_type": "pd2", "poll_interval_sec": 60,
+        "mapper": {"format": "syslog_json"},
+        "sink": {"type": "multi", "require": "all", "sinks": [
+            {"type": "tls", "host": "siem.example.com", "port": 6514},
+            {"type": "file", "path": "/var/log/illumio/events.log"},
+        ]},
+    })
+    assert pc.sink.require == "all"

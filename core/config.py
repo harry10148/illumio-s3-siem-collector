@@ -168,10 +168,13 @@ class FileSinkConfig(BaseModel):
 class MultiSinkConfig(BaseModel):
     """Fan-out: deliver each event to multiple sinks simultaneously.
 
-    Returns False (stops checkpoint) only when **all** child sinks fail.
+    With require="any" (default): Returns False (stops checkpoint) only when
+    **all** child sinks fail. With require="all": Returns False if **any**
+    child sink fails.
     """
 
     type: Literal["multi"]
+    require: Literal["any", "all"] = "any"
     sinks: List[SinkConfig]  # forward ref — resolved by model_rebuild() below
 
 
