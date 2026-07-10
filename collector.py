@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 
 from core.config import load_config
@@ -54,6 +55,14 @@ def _sink_desc(sc) -> str:
     return f"{sc.type} {sc.host}:{sc.port}"
 
 
+def _install_sigterm_exit() -> None:
+    """Polling mode: make SIGTERM behave like SIGINT so BlockingScheduler
+    unwinds through run_forever's finally block (sinks get flushed/closed)."""
+    def _raise_exit(signum, frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, _raise_exit)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Illumio S3 -> SIEM Collector")
     parser.add_argument("--config", required=True, help="path to config.yaml")
@@ -94,6 +103,7 @@ def main(argv=None) -> int:
             match[0].sink.close()
             return 0
 
+        _install_sigterm_exit()
         scheduler = PipelineScheduler(pipelines)
         scheduler.run_forever()
         return 0
@@ -111,7 +121,6 @@ def main(argv=None) -> int:
             print("[dry-run] config OK, exiting.")
             return 0
 
-        import signal
         dispatcher = result.sqs_dispatcher
 
         def _handle_sigterm(signum, frame):
