@@ -5,7 +5,7 @@ import socket
 import ssl
 from typing import List, Optional
 
-from sinks.tcp_sink import TcpSink
+from sinks.tcp_sink import TcpSink, _tune_keepalive
 
 
 class TlsSink(TcpSink):
@@ -31,5 +31,10 @@ class TlsSink(TcpSink):
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         raw = socket.create_connection((self.host, self.port), timeout=self.timeout)
-        raw.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        _tune_keepalive(raw)
         return ctx.wrap_socket(raw, server_hostname=self.host)
+
+    def _peer_closed(self) -> bool:
+        # SSLSocket does not support MSG_PEEK; rely on TCP_USER_TIMEOUT
+        # and keepalive from _tune_keepalive instead.
+        return False

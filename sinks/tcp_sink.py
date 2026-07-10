@@ -3,6 +3,7 @@ non-transparent), and bounded retries."""
 from __future__ import annotations
 
 import logging
+import select
 import socket
 import time
 from typing import List, Optional
@@ -12,6 +13,23 @@ from sinks.base import Sink
 log = logging.getLogger(__name__)
 
 _TCP_MAX = 8192
+_KEEPIDLE_SEC = 30
+_KEEPINTVL_SEC = 10
+_KEEPCNT = 3
+_USER_TIMEOUT_MS = 60_000
+
+
+def _tune_keepalive(sock: socket.socket) -> None:
+    """Detect dead peers in ~1 minute instead of the kernel default (~2h)."""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, _KEEPIDLE_SEC)
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, _KEEPINTVL_SEC)
+    if hasattr(socket, "TCP_KEEPCNT"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, _KEEPCNT)
+    if hasattr(socket, "TCP_USER_TIMEOUT"):
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, _USER_TIMEOUT_MS)
 
 
 def _truncate_if_needed(wire: bytes) -> tuple[bytes, bool]:
@@ -39,7 +57,7 @@ class TcpSink(Sink):
 
     def _connect(self) -> socket.socket:
         s = socket.create_connection((self.host, self.port), timeout=self.timeout)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        _tune_keepalive(s)
         return s
 
     def _ensure_socket(self) -> socket.socket:
@@ -55,6 +73,19 @@ class TcpSink(Sink):
                 pass
             self.sock = None
 
+    def _peer_closed(self) -> bool:
+        """A readable socket on a send-only syslog connection almost always
+        means FIN/RST. MSG_PEEK leaves any real data intact."""
+        if self.sock is None:
+            return False
+        try:
+            r, _, _ = select.select([self.sock], [], [], 0)
+            if not r:
+                return False
+            return self.sock.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
+
     def send(self, wire: bytes) -> bool:
         wire, _ = _truncate_if_needed(wire)
         frame = wire + b"\n"
@@ -63,6 +94,8 @@ class TcpSink(Sink):
         while True:
             try:
                 s = self._ensure_socket()
+                if self._peer_closed():
+                    raise OSError("peer closed connection")
                 s.sendall(frame)
                 return True
             except OSError as e:
