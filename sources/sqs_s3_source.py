@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.parse import unquote_plus
 
 from core.sqs_pipeline import SqsPipeline
@@ -112,15 +112,18 @@ class SqsS3Dispatcher:
             WaitTimeSeconds=self.wait_time_sec,
             VisibilityTimeout=self.visibility_timeout_sec,
         )
+        received_at = time.monotonic()
         messages = resp.get("Messages", []) or []
         for msg in messages:
-            self._handle_message(msg)
+            self._handle_message(msg, received_at=received_at)
         return len(messages)
 
-    def _handle_message(self, msg: dict) -> None:
+    def _handle_message(self, msg: dict, received_at: Optional[float] = None) -> None:
         body = msg.get("Body", "")
         receipt = msg["ReceiptHandle"]
-        last_extend_at = time.monotonic()
+        # The visibility clock started when the batch was received, not when
+        # this message's turn came up in the serial loop.
+        last_extend_at = received_at if received_at is not None else time.monotonic()
         # First check uses the initial visibility window; later checks use
         # the extension window since each extend_call resets visibility to
         # `visibility_extension_sec`.

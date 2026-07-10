@@ -411,3 +411,38 @@ def test_dispatcher_finishes_in_flight_message_before_stop(aws_env):
     assert len(captured) == 1
     msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
     assert msgs == []
+
+
+@mock_aws
+def test_handle_message_extends_based_on_receive_time(aws_env):
+    """Visibility clock starts at receive, not at handle start: a message
+    picked up late in a batch must be extended immediately."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=60)["Messages"]
+
+    real_change = sqs.change_message_visibility
+    calls = []
+    def spy_change(**kwargs):
+        calls.append(kwargs)
+        return real_change(**kwargs)
+    sqs.change_message_visibility = spy_change
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       visibility_timeout_sec=60,
+                       visibility_extension_sec=120)
+    # Simulate: the batch was received 40s ago (>= 60/2), processing starts now.
+    d._handle_message(msgs[0], received_at=time.monotonic() - 40)
+
+    assert len(calls) >= 1
+    assert calls[0]["VisibilityTimeout"] == 120
