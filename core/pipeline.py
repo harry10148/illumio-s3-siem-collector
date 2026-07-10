@@ -100,42 +100,44 @@ class Pipeline:
             body = gzip.decompress(body)
         except Exception:
             pass  # not gzipped; use as-is
-        for raw_line in body.splitlines():
-            if not raw_line.strip():
-                continue
-            stats["read"] += 1
-            try:
-                ev = json.loads(raw_line)
-            except Exception:
-                stats["mapper_err"] += 1
-                bad_json += 1
-                continue
+        try:
+            for raw_line in body.splitlines():
+                if not raw_line.strip():
+                    continue
+                stats["read"] += 1
+                try:
+                    ev = json.loads(raw_line)
+                except Exception:
+                    stats["mapper_err"] += 1
+                    bad_json += 1
+                    continue
 
-            if self.filter_fn and not self.filter_fn(ev):
-                stats["filtered"] += 1
-                continue
+                if self.filter_fn and not self.filter_fn(ev):
+                    stats["filtered"] += 1
+                    continue
 
-            try:
-                wire = self.mapper.format(ev)
-            except Exception as e:  # noqa: BLE001
-                stats["mapper_err"] += 1
-                self.log.error("mapper error on %s: %s", key, e)
-                continue
+                try:
+                    wire = self.mapper.format(ev)
+                except Exception as e:  # noqa: BLE001
+                    stats["mapper_err"] += 1
+                    self.log.error("mapper error on %s: %s", key, e)
+                    continue
 
-            if self.sink.send(wire):
-                stats["sent"] += 1
-                sent_in_file += 1
-            else:
+                if self.sink.send(wire):
+                    stats["sent"] += 1
+                    sent_in_file += 1
+                else:
+                    stats["failed"] += 1
+                    return False, sent_in_file
+            if sent_in_file and not self.sink.flush():
+                stats["sent"] -= sent_in_file
                 stats["failed"] += 1
+                self.log.error("sink flush failed on %s", key)
                 return False, sent_in_file
-        if bad_json:
-            self.log.warning("%d bad JSON lines in %s; skipped", bad_json, key)
-        if sent_in_file and not self.sink.flush():
-            stats["sent"] -= sent_in_file
-            stats["failed"] += 1
-            self.log.error("sink flush failed on %s", key)
-            return False, sent_in_file
-        return True, sent_in_file
+            return True, sent_in_file
+        finally:
+            if bad_json:
+                self.log.warning("%d bad JSON lines in %s; skipped", bad_json, key)
 
 
 # ---- factory ----------------------------------------------------------------

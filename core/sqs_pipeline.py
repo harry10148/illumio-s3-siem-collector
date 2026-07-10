@@ -76,8 +76,6 @@ class SqsPipeline:
                 else:
                     stats["failed"] += 1
                     return False
-            if bad_json:
-                self.log.warning("%d bad JSON lines in message; skipped", bad_json)
             if sent_in_msg and not self.sink.flush():
                 stats["sent"] -= sent_in_msg
                 stats["failed"] += 1
@@ -85,6 +83,8 @@ class SqsPipeline:
                 return False
             return True
         finally:
+            if bad_json:
+                self.log.warning("%d bad JSON lines in message; skipped", bad_json)
             self.last_stats = stats
             self.log.info(
                 "process: read=%d sent=%d filtered=%d mapper_err=%d failed=%d",
