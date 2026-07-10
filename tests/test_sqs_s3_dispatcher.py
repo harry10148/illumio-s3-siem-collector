@@ -510,3 +510,24 @@ def test_warns_when_queue_has_no_dlq(aws_env, caplog):
     with caplog.at_level(logging.WARNING):
         d._warn_if_no_dlq()
     assert any("RedrivePolicy" in r.getMessage() for r in caplog.records)
+
+
+@mock_aws
+def test_dispatcher_heartbeat_logged(aws_env, caplog):
+    import threading as _t
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       heartbeat_interval_sec=0)
+    t = _t.Thread(target=d.run_forever, daemon=True)
+    with caplog.at_level(logging.INFO):
+        t.start()
+        time.sleep(0.3)
+        d.request_stop()
+        t.join(timeout=5)
+    assert any("heartbeat" in r.getMessage() for r in caplog.records)

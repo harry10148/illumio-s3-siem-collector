@@ -88,6 +88,7 @@ class SqsS3Dispatcher:
         max_messages_per_receive: int = 10,
         max_workers: int = 1,
         poison_receive_count: int = 10,
+        heartbeat_interval_sec: int = 300,
     ):
         self.sqs = sqs_client
         self.s3 = s3_client
@@ -100,6 +101,7 @@ class SqsS3Dispatcher:
         self.wait_time_sec = wait_time_sec
         self.max_messages_per_receive = max_messages_per_receive
         self.poison_receive_count = poison_receive_count
+        self.heartbeat_interval_sec = heartbeat_interval_sec
         if max_workers != 1:
             log.warning("max_workers=%d requested, but only 1 is supported "
                         "in this version; falling back to 1", max_workers)
@@ -228,12 +230,20 @@ class SqsS3Dispatcher:
     def run_forever(self) -> None:
         log.info("SQS dispatcher starting, queue=...%s", self.queue_url[-32:])
         self._warn_if_no_dlq()
+        batches = 0
+        messages = 0
+        last_heartbeat = time.monotonic()
         while not self._stop_event.is_set():
             try:
-                self.consume_one_batch()
+                n = self.consume_one_batch()
+                batches += 1
+                messages += n
             except Exception as e:  # noqa: BLE001
                 log.exception("consume batch failed: %s", e)
                 self._stop_event.wait(timeout=5)
+            if time.monotonic() - last_heartbeat >= self.heartbeat_interval_sec:
+                log.info("heartbeat: batches=%d messages=%d", batches, messages)
+                last_heartbeat = time.monotonic()
         log.info("SQS dispatcher stopped")
 
     def request_stop(self) -> None:
