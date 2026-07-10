@@ -492,12 +492,15 @@ def test_poison_threshold_message_processed_first_deletes_on_success(aws_env):
                        pipelines=[pipeline], wait_time_sec=0,
                        max_messages_per_receive=10,
                        poison_receive_count=2)
-    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                              VisibilityTimeout=1)["Messages"][0]
     raw["Attributes"] = {"ApproximateReceiveCount": "5"}
     d._handle_message(raw, received_at=time.monotonic())
 
     assert len(sink.sent) == 1
-    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
     assert msgs == []
 
 
@@ -517,13 +520,16 @@ def test_poison_threshold_permanent_failure_deleted(aws_env, caplog):
                        pipelines=[pipeline], wait_time_sec=0,
                        max_messages_per_receive=10,
                        poison_receive_count=2)
-    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                              VisibilityTimeout=1)["Messages"][0]
     raw["Attributes"] = {"ApproximateReceiveCount": "10"}
     with caplog.at_level(logging.ERROR):
         d._handle_message(raw, received_at=time.monotonic())
 
     assert any("poison" in r.getMessage() for r in caplog.records)
-    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
     assert msgs == []
 
 
@@ -572,13 +578,16 @@ def test_poison_threshold_malformed_body_deleted(aws_env, caplog):
                        pipelines=[pipeline], wait_time_sec=0,
                        max_messages_per_receive=10,
                        poison_receive_count=2)
-    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                              VisibilityTimeout=1)["Messages"][0]
     raw["Attributes"] = {"ApproximateReceiveCount": "10"}
     with caplog.at_level(logging.ERROR):
         d._handle_message(raw, received_at=time.monotonic())
 
     assert any("poison" in r.getMessage() for r in caplog.records)
-    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
     assert msgs == []
 
 
