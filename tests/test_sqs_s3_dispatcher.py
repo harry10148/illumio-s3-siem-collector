@@ -476,7 +476,91 @@ def test_dispatcher_passes_on_progress_to_pipeline(aws_env):
 
 
 @mock_aws
-def test_poison_message_deleted_after_receive_count_threshold(aws_env):
+def test_poison_threshold_message_processed_first_deletes_on_success(aws_env):
+    """A message at/above the poison threshold must be ATTEMPTED first, not
+    deleted pre-emptively; if processing succeeds it is a normal success delete."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       poison_receive_count=2)
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw["Attributes"] = {"ApproximateReceiveCount": "5"}
+    d._handle_message(raw, received_at=time.monotonic())
+
+    assert len(sink.sent) == 1
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    assert msgs == []
+
+
+@mock_aws
+def test_poison_threshold_permanent_failure_deleted(aws_env, caplog):
+    """Corrupt gzip (permanent failure) at/above threshold -> deleted, ERROR logged."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/bad.json.gz"
+    s3.put_object(Bucket=bucket, Key=key, Body=b"not gzip")
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       poison_receive_count=2)
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw["Attributes"] = {"ApproximateReceiveCount": "10"}
+    with caplog.at_level(logging.ERROR):
+        d._handle_message(raw, received_at=time.monotonic())
+
+    assert any("poison" in r.getMessage() for r in caplog.records)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
+    assert msgs == []
+
+
+@mock_aws
+def test_poison_threshold_retryable_failure_not_deleted(aws_env, caplog):
+    """Sink failure (retryable) at/above threshold -> NEVER deleted; WARNING logged."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    class FailingSink(CapturingSink):
+        def send(self, w): return False
+    sink = FailingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       poison_receive_count=2)
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                              VisibilityTimeout=1)["Messages"][0]
+    raw["Attributes"] = {"ApproximateReceiveCount": "10"}
+    with caplog.at_level(logging.WARNING):
+        d._handle_message(raw, received_at=time.monotonic())
+
+    assert any("retryable" in r.getMessage() for r in caplog.records)
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
+    assert len(msgs) == 1
+
+
+@mock_aws
+def test_poison_threshold_malformed_body_deleted(aws_env, caplog):
+    """Malformed body (permanent failure) at/above threshold -> deleted, ERROR logged."""
     from sources.sqs_s3_source import SqsS3Dispatcher
     s3, sqs, qurl, bucket = _fixture_setup(aws_env)
     sqs.send_message(QueueUrl=qurl, MessageBody="not json — poison")
@@ -487,14 +571,14 @@ def test_poison_message_deleted_after_receive_count_threshold(aws_env):
                        bucket="test-bucket", fqdn="pce.example.com", org_id="1",
                        pipelines=[pipeline], wait_time_sec=0,
                        max_messages_per_receive=10,
-                       visibility_timeout_sec=1,
                        poison_receive_count=2)
-    d.consume_one_batch()          # receive #1: kept (malformed, below threshold)
-    time.sleep(1.5)
-    d.consume_one_batch()          # receive #2: hits threshold -> deleted
-    time.sleep(1.5)
-    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
-                               VisibilityTimeout=1).get("Messages", [])
+    raw = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0)["Messages"][0]
+    raw["Attributes"] = {"ApproximateReceiveCount": "10"}
+    with caplog.at_level(logging.ERROR):
+        d._handle_message(raw, received_at=time.monotonic())
+
+    assert any("poison" in r.getMessage() for r in caplog.records)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
     assert msgs == []
 
 

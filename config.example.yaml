@@ -61,6 +61,7 @@ source:
 #   # max_messages_per_receive: 10
 #   # max_workers: 1
 #   # poison_receive_count: 10       # 訊息重複收到 N 次後視為毒訊息：記 ERROR 後刪除（0 = 停用）
+#   #   僅適用於不可重試的失敗（本體解析失敗、bucket 不符、gzip 損毀）；sink 失敗不會觸發。
 #   #   若在 SQS 隊列上設定 DLQ（RedrivePolicy），其 maxReceiveCount 必須
 #   #   嚴格小於此值（建議 5），否則此防護會先把訊息刪除，DLQ 永遠收不到訊息。
 #   #   詳見 docs/OPERATIONS.md「SQS 模式的 DLQ 與毒訊息」。

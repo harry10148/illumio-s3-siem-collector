@@ -515,18 +515,23 @@ SIEM 端如需去重，可用事件內的 `href` 或（syslog 格式）整行內
 - 強烈建議在 SQS 隊列上設定 RedrivePolicy（DLQ）。collector 啟動時會檢查，
   未設定會記 WARNING。
 - **`maxReceiveCount` 必須嚴格小於 `poison_receive_count`**（預設 10，
-  建議設 `maxReceiveCount: 5`）。collector 端的毒訊息防護會在訊息第
-  `poison_receive_count` 次收到時就刪除訊息；若 `maxReceiveCount` 大於等於
-  `poison_receive_count`，client 端會先把訊息刪掉，SQS 永遠不會把它轉進
-  DLQ，DLQ 形同虛設。
-- 未設 DLQ 時由 `poison_receive_count`（預設 10）兜底：同一訊息重複收到
-  N 次後記 ERROR（含 body 開頭 500 字元）並刪除。請對 ERROR log 設告警。
-- **注意**：receive count 在下游 SIEM 長時間中斷時也會累積——每次
-  visibility timeout 到期後的重新投遞都會讓 `ApproximateReceiveCount` +1，
-  即使訊息本身完全正常。長時間的 sink 中斷可能把大量合法訊息推向
-  `poison_receive_count` 門檻並被誤刪。務必確保 `maxReceiveCount` 與
-  `poison_receive_count` 的間距（見上方）足以撐過預期的最長中斷時間，
-  否則應優先修復 sink 中斷而非單純調高門檻。
+  建議設 `maxReceiveCount: 5`）。collector 端的毒訊息防護只有在訊息本體確定
+  無法處理（不可重試失敗）且第 `poison_receive_count` 次收到時才會刪除訊息；
+  若 `maxReceiveCount` 大於等於 `poison_receive_count`，client 端會先把訊息
+  刪掉，SQS 永遠不會把它轉進 DLQ，DLQ 形同虛設。
+- 只有不可重試失敗（訊息本體解析失敗、bucket 不符、gzip 損毀）會在達到
+  `poison_receive_count`（預設 10）門檻時記 ERROR（含 receive count、門檻
+  與 S3 key 或 body 開頭 500 字元）並刪除。請對 ERROR log 設告警。
+- sink 斷線等可重試失敗（`s3.get_object` 例外、SIEM sink 送出失敗）**永不**
+  觸發 client 端刪除，不論 receive count 多高；訊息會持續重新投遞，達到門檻
+  時只記 WARNING 說明「receive count 已達門檻但失敗屬可重試（下游中斷），
+  不刪除」。
+- **注意**：sink 斷線會讓 receive count 持續累積——每次 visibility timeout
+  到期後的重新投遞都會讓 `ApproximateReceiveCount` +1，即使訊息本身完全
+  正常。但這類可重試失敗不會觸發 client 端刪除；訊息可能因此先進 DLQ（若
+  `maxReceiveCount` 設定得當），sink 恢復後需人工從 DLQ redrive 回主隊列。
+  務必確保 `maxReceiveCount` 與 `poison_receive_count` 的間距（見上方）足以
+  撐過預期的最長中斷時間。
 - 監控 DLQ 深度（CloudWatch `ApproximateNumberOfMessagesVisible`）。
 
 ### 對帳掃描（reconcile）
