@@ -190,7 +190,7 @@ class SqsS3Dispatcher:
             log.error("gunzip failed for %s: %s; not deleting (DLQ catches)", ref.key, e)
             return False
         extend_visibility()
-        return pipeline.process(decoded)
+        return pipeline.process(decoded, on_progress=extend_visibility)
 
     def _delete(self, receipt_handle: str) -> None:
         try:

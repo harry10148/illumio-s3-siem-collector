@@ -446,3 +446,28 @@ def test_handle_message_extends_based_on_receive_time(aws_env):
 
     assert len(calls) >= 1
     assert calls[0]["VisibilityTimeout"] == 120
+
+
+@mock_aws
+def test_dispatcher_passes_on_progress_to_pipeline(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    seen = {}
+
+    class StubPipeline:
+        name = "stub"
+        log_type = "auditable"
+        def process(self, body, on_progress=None):
+            seen["on_progress"] = on_progress
+            return True
+
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[StubPipeline()], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    d.consume_one_batch()
+    assert callable(seen.get("on_progress"))
