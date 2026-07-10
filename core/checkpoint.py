@@ -77,7 +77,16 @@ class CheckpointStore:
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as fp:
                 json.dump(cp.to_dict(), fp, indent=2)
+                fp.flush()
+                os.fsync(fp.fileno())
             os.replace(tmp_path, final)
+            # Persist the rename itself; skipped on platforms without O_DIRECTORY (Windows).
+            if hasattr(os, "O_DIRECTORY"):
+                dir_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         except Exception:
             try:
                 os.unlink(tmp_path)

@@ -72,3 +72,21 @@ def test_fresh_checkpoint_lookback_zero(tmp_state_dir, fixed_now):
     store = CheckpointStore(tmp_state_dir)
     cp = store.fresh("p1", initial_lookback_hours=0, now=fixed_now)
     assert cp.last_modified == fixed_now
+
+
+def test_save_fsyncs_file_before_replace(tmp_state_dir, monkeypatch):
+    """Power-loss safety: the temp file must be fsynced before os.replace."""
+    import os as _os
+    from core.checkpoint import CheckpointStore
+
+    fsynced = []
+    real_fsync = _os.fsync
+
+    def spy_fsync(fd):
+        fsynced.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(_os, "fsync", spy_fsync)
+    store = CheckpointStore(tmp_state_dir)
+    store.save(store.fresh("p1", initial_lookback_hours=24))
+    assert len(fsynced) >= 1
