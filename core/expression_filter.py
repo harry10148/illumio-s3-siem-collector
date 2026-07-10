@@ -11,6 +11,8 @@ from typing import Callable
 
 from simpleeval import DEFAULT_FUNCTIONS, EvalWithCompoundTypes
 
+from core.exceptions import ConfigError
+
 log = logging.getLogger(__name__)
 
 # Alias the sandboxed runner method to a neutral name so security linters that
@@ -59,20 +61,27 @@ class DotDict:
 def compile_expression(expression: str) -> Callable[[dict], bool]:
     """Return a function ``match(event_dict) -> bool``.
 
-    A malformed expression or evaluation error returns False (and logs a
-    single WARNING, then stays silent to avoid log floods). This is
-    deliberate: bad filters drop all events, which is visible in log counts.
+    The expression is parsed once at compile time; a syntax error raises
+    ConfigError so the service fails fast at startup. Evaluation errors at
+    runtime return False (logged once) — bad filters drop events, which is
+    visible in tick/process log counts.
+
+    The returned closure reuses one evaluator instance and the parsed AST.
+    This is safe because each pipeline gets its own filter_fn and pipelines
+    run single-threaded (APScheduler max_instances=1 / serial SQS dispatch).
     """
     safe_funcs = {"str": str, "len": len, **DEFAULT_FUNCTIONS}
+    evaluator = EvalWithCompoundTypes(functions=safe_funcs)
+    try:
+        parsed = evaluator.parse(expression)
+    except SyntaxError as e:
+        raise ConfigError(f"invalid filter expression {expression!r}: {e}") from e
     _warned = {"once": False}
 
     def match(event: dict) -> bool:
         try:
-            evaluator = EvalWithCompoundTypes(
-                names={"ev": DotDict(event)},
-                functions=safe_funcs,
-            )
-            result = _run_sandboxed(evaluator, expression)
+            evaluator.names = {"ev": DotDict(event)}
+            result = _run_sandboxed(evaluator, expression, parsed)
             return bool(result)
         except Exception as e:  # noqa: BLE001 - intentional broad catch
             if not _warned["once"]:

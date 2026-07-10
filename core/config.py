@@ -38,6 +38,11 @@ class S3SourceConfig(BaseModel):
     bucket: str
     fqdn: str
     org_id: str
+    safety_lag_sec: int = Field(
+        default=60, ge=0,
+        description="Only process objects older than now - lag; closes the "
+                    "same-second S3 listing race. 0 disables.",
+    )
 
 
 class SqsS3SourceConfig(BaseModel):
@@ -51,6 +56,20 @@ class SqsS3SourceConfig(BaseModel):
     wait_time_sec: int = 20
     max_messages_per_receive: int = 10
     max_workers: int = 1
+    poison_receive_count: int = Field(
+        default=10, ge=0,
+        description="Delete a message after this many receives (poison guard "
+                    "when the queue has no DLQ). 0 disables.",
+    )
+    reconcile_interval_sec: int = Field(
+        default=3600, ge=0,
+        description="Sweep S3 for objects the queue never delivered every N "
+                    "seconds. 0 disables.",
+    )
+    reconcile_window_sec: int = Field(
+        default=7200, ge=600,
+        description="How far back the reconcile sweep looks.",
+    )
 
 
 # Discriminated union; Pydantic routes on the literal ``type`` field.
@@ -108,7 +127,11 @@ class NetworkSinkConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0)
     retry_backoff_sec: List[float] = [1, 2, 4]
     batch_size: int = Field(default=100, ge=1)
-    max_bytes: int = Field(default=8192, ge=0)
+    max_bytes: Optional[int] = Field(
+        default=None, ge=0,
+        description="Max payload bytes before truncation. None = per-type "
+                    "default: udp 8192, tcp/tls 0 (no truncation).",
+    )
 
     @model_validator(mode="after")
     def _type_requirements(self):
@@ -140,15 +163,23 @@ class FileSinkConfig(BaseModel):
         default="ILLUMIO_FLOW: ",
         description="Prepend this string to every line (FortiSIEM Agent Log Prefix).",
     )
+    fsync: bool = Field(
+        default=False,
+        description="fsync on every flush. Safest for compliance archives; "
+                    "adds one disk sync per processed file.",
+    )
 
 
 class MultiSinkConfig(BaseModel):
     """Fan-out: deliver each event to multiple sinks simultaneously.
 
-    Returns False (stops checkpoint) only when **all** child sinks fail.
+    With require="any" (default): Returns False (stops checkpoint) only when
+    **all** child sinks fail. With require="all": Returns False if **any**
+    child sink fails.
     """
 
     type: Literal["multi"]
+    require: Literal["any", "all"] = "any"
     sinks: List[SinkConfig]  # forward ref — resolved by model_rebuild() below
 
 

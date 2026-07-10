@@ -60,3 +60,4 @@ build/
 *.zip
 # Vendor binaries are intentionally committed
 !vendor/**/*.zip
+s3_accesskey

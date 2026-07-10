@@ -1,3 +1,6 @@
+import pytest
+
+from core.exceptions import ConfigError
 from core.expression_filter import compile_expression
 
 
@@ -37,9 +40,15 @@ def test_str_function_available():
     assert match({"notifications": [{"type": "logout"}]}) is False
 
 
-def test_invalid_expression_always_false():
-    match = compile_expression("this is not valid python")
-    assert match({"pd": 2}) is False
+def test_invalid_expression_raises_config_error_at_compile():
+    """Fail fast at startup: a typo must not silently drop 100% of events."""
+    with pytest.raises(ConfigError):
+        compile_expression("this is not valid python")
+
+
+def test_runtime_error_returns_false():
+    match = compile_expression("ev.x / 0")
+    assert match({"x": 1}) is False
 
 
 def test_null_event_fields():

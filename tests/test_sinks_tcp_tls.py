@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from sinks.tcp_sink import TcpSink, _truncate_if_needed
+from sinks.tcp_sink import TcpSink
 
 
 @pytest.fixture
@@ -76,8 +76,40 @@ def test_tcp_connect_failure_returns_false():
     sink.close()
 
 
-def test_tcp_truncates_over_8192():
+def test_tcp_no_truncation_by_default():
+    sink = TcpSink(host="127.0.0.1", port=1)
     big = b"A" * 10000
-    out, warned = _truncate_if_needed(big)
+    assert sink._truncate_if_needed(big) == big
+
+
+def test_tcp_truncates_when_max_bytes_set():
+    sink = TcpSink(host="127.0.0.1", port=1, max_bytes=8192)
+    out = sink._truncate_if_needed(b"A" * 10000)
     assert len(out) == 8192
-    assert warned
+
+
+def test_tcp_socket_keepalive_tuned(tcp_listener):
+    host, port, _ = tcp_listener
+    sink = TcpSink(host=host, port=port, max_retries=0, retry_backoff_sec=[])
+    assert sink.send(b"x") is True
+    s = sink.sock
+    assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 30
+    if hasattr(socket, "TCP_USER_TIMEOUT"):
+        assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT) == 60_000
+    sink.close()
+
+
+def test_tcp_detects_peer_close_and_reconnects(tcp_listener):
+    """After the server closes the connection (FIN), the next send must
+    detect it and reconnect instead of writing into a dead socket."""
+    host, port, received = tcp_listener
+    sink = TcpSink(host=host, port=port, max_retries=2,
+                   retry_backoff_sec=[0.01, 0.01])
+    assert sink.send(b"first") is True
+    time.sleep(0.6)   # listener's 0.3s idle timeout closes the connection
+    assert sink.send(b"second") is True
+    sink.close()
+    time.sleep(0.5)
+    assert b"second\n" in b"".join(received)

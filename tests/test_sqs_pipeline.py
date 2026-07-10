@@ -85,3 +85,17 @@ def test_process_flush_failure_returns_false():
                     sink=sink, filter_fn=None)
     ok = p.process(_body([{"a": 1}]))
     assert ok is False
+
+
+def test_process_calls_on_progress_periodically():
+    class OkSink:
+        def send(self, w): return True
+        def flush(self): return True
+        def close(self): pass
+
+    body = b"\n".join(b'{"a":%d}' % i for i in range(500))
+    calls = []
+    p = SqsPipeline(name="p", log_type="auditable",
+                    mapper=PassthroughMapper(), sink=OkSink(), filter_fn=None)
+    assert p.process(body, on_progress=lambda: calls.append(1)) is True
+    assert len(calls) == 2  # fired at line 200 and 400

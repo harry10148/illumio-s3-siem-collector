@@ -87,7 +87,9 @@ def test_extract_refs_url_decodes_keys():
 
 
 import gzip
+import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from moto import mock_aws
@@ -411,3 +413,197 @@ def test_dispatcher_finishes_in_flight_message_before_stop(aws_env):
     assert len(captured) == 1
     msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0).get("Messages", [])
     assert msgs == []
+
+
+@mock_aws
+def test_handle_message_extends_based_on_receive_time(aws_env):
+    """Visibility clock starts at receive, not at handle start: a message
+    picked up late in a batch must be extended immediately."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=60)["Messages"]
+
+    real_change = sqs.change_message_visibility
+    calls = []
+    def spy_change(**kwargs):
+        calls.append(kwargs)
+        return real_change(**kwargs)
+    sqs.change_message_visibility = spy_change
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       visibility_timeout_sec=60,
+                       visibility_extension_sec=120)
+    # Simulate: the batch was received 40s ago (>= 60/2), processing starts now.
+    d._handle_message(msgs[0], received_at=time.monotonic() - 40)
+
+    assert len(calls) >= 1
+    assert calls[0]["VisibilityTimeout"] == 120
+
+
+@mock_aws
+def test_dispatcher_passes_on_progress_to_pipeline(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    seen = {}
+
+    class StubPipeline:
+        name = "stub"
+        log_type = "auditable"
+        def process(self, body, on_progress=None):
+            seen["on_progress"] = on_progress
+            return True
+
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[StubPipeline()], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    d.consume_one_batch()
+    assert callable(seen.get("on_progress"))
+
+
+@mock_aws
+def test_poison_message_deleted_after_receive_count_threshold(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sqs.send_message(QueueUrl=qurl, MessageBody="not json — poison")
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       visibility_timeout_sec=1,
+                       poison_receive_count=2)
+    d.consume_one_batch()          # receive #1: kept (malformed, below threshold)
+    time.sleep(1.5)
+    d.consume_one_batch()          # receive #2: hits threshold -> deleted
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
+    assert msgs == []
+
+
+@mock_aws
+def test_warns_when_queue_has_no_dlq(aws_env, caplog):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    with caplog.at_level(logging.WARNING):
+        d._warn_if_no_dlq()
+    assert any("RedrivePolicy" in r.getMessage() for r in caplog.records)
+
+
+@mock_aws
+def test_dispatcher_heartbeat_logged(aws_env, caplog):
+    import threading as _t
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       heartbeat_interval_sec=0)
+    t = _t.Thread(target=d.run_forever, daemon=True)
+    with caplog.at_level(logging.INFO):
+        t.start()
+        time.sleep(0.3)
+        d.request_stop()
+        t.join(timeout=5)
+    assert any("heartbeat" in r.getMessage() for r in caplog.records)
+
+
+@mock_aws
+def test_reconcile_processes_object_missed_by_queue(aws_env):
+    """An object that never produced an SQS message is picked up by the sweep."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    now = datetime.now(timezone.utc)
+    key = f"pce.example.com/org_id=1/auditable/{now:%Y%m%d}_missed.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    # Deliberately NO SQS message — simulates SNS delivery loss.
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       reconcile_interval_sec=3600,
+                       reconcile_window_sec=7200,
+                       reconcile_safety_lag_sec=0)
+    d._started_at_wall = now - timedelta(hours=1)
+    d._reconcile()
+    assert len(sink.sent) == 1
+
+
+@mock_aws
+def test_reconcile_skips_keys_already_processed_via_queue(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    now = datetime.now(timezone.utc)
+    key = f"pce.example.com/org_id=1/auditable/{now:%Y%m%d}_x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       reconcile_interval_sec=3600,
+                       reconcile_window_sec=7200,
+                       reconcile_safety_lag_sec=0)
+    d._started_at_wall = now - timedelta(hours=1)
+    d.consume_one_batch()          # processed via queue; key recorded
+    assert len(sink.sent) == 1
+    d._reconcile()                 # must NOT process it again
+    assert len(sink.sent) == 1
+
+
+@mock_aws
+def test_processed_keys_not_recorded_when_reconciliation_disabled(aws_env):
+    """When reconcile_interval_sec=0, _processed_keys should remain empty.
+    This prevents unbounded memory growth when reconciliation is disabled."""
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    key = "pce.example.com/org_id=1/auditable/2026/05/07/x.json.gz"
+    _put_object(s3, bucket, key, [{"a": 1}, {"a": 2}])
+    _enqueue_event(sqs, qurl, bucket, key)
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+
+    d = SqsS3Dispatcher(
+        sqs_client=sqs, s3_client=s3,
+        queue_url=qurl, bucket="test-bucket",
+        fqdn="pce.example.com", org_id="1",
+        pipelines=[pipeline],
+        wait_time_sec=0, max_messages_per_receive=10,
+        reconcile_interval_sec=0)  # Explicitly disabled
+    d.consume_one_batch()
+
+    assert len(sink.sent) == 2
+    assert d._processed_keys == {}  # Should be empty, not containing the key

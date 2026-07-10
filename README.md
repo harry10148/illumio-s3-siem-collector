@@ -69,6 +69,10 @@ sudo systemctl start illumio-collector
 sudo journalctl -u illumio-collector -f
 ```
 
+> 依賴版本管理：`requirements.txt` 是範圍宣告（開發用），`requirements.lock`
+> 是全鎖定版本（部署用）。install.sh 與離線打包會優先使用 lock 檔。
+> 升級依賴後請重新產生：`pip freeze > requirements.lock`（在乾淨 venv 內）。
+
 > **不想裝成服務，只想直接跑：**
 > ```bash
 > source venv/bin/activate

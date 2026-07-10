@@ -62,6 +62,12 @@ class Pipeline:
             cp = self.checkpoint_store.fresh(
                 self.name, initial_lookback_hours=self.recovery_lookback_hours)
             self.checkpoint_store.save(cp)
+        if cp.last_modified is None:
+            cp = self.checkpoint_store.fresh(
+                self.name, initial_lookback_hours=self.recovery_lookback_hours)
+            self.checkpoint_store.save(cp)
+            self.log.info("initialized fresh checkpoint with lookback=%dh",
+                          self.recovery_lookback_hours)
 
         stats = dict(files=0, read=0, filtered=0,
                      sent=0, failed=0, mapper_err=0)
@@ -89,47 +95,61 @@ class Pipeline:
 
     def _process_file(self, key: str, body: bytes, stats: dict) -> tuple[bool, int]:
         sent_in_file = 0
+        bad_json = 0
         try:
             body = gzip.decompress(body)
         except Exception:
             pass  # not gzipped; use as-is
-        for raw_line in body.splitlines():
-            if not raw_line.strip():
-                continue
-            stats["read"] += 1
-            try:
-                ev = json.loads(raw_line)
-            except Exception:
-                stats["mapper_err"] += 1
-                self.log.warning("bad JSON line in %s; skipping", key)
-                continue
+        try:
+            for raw_line in body.splitlines():
+                if not raw_line.strip():
+                    continue
+                stats["read"] += 1
+                try:
+                    ev = json.loads(raw_line)
+                except Exception:
+                    stats["mapper_err"] += 1
+                    bad_json += 1
+                    continue
 
-            if self.filter_fn and not self.filter_fn(ev):
-                stats["filtered"] += 1
-                continue
+                if self.filter_fn and not self.filter_fn(ev):
+                    stats["filtered"] += 1
+                    continue
 
-            try:
-                wire = self.mapper.format(ev)
-            except Exception as e:  # noqa: BLE001
-                stats["mapper_err"] += 1
-                self.log.error("mapper error on %s: %s", key, e)
-                continue
+                try:
+                    wire = self.mapper.format(ev)
+                except Exception as e:  # noqa: BLE001
+                    stats["mapper_err"] += 1
+                    self.log.error("mapper error on %s: %s", key, e)
+                    continue
 
-            if self.sink.send(wire):
-                stats["sent"] += 1
-                sent_in_file += 1
-            else:
+                if self.sink.send(wire):
+                    stats["sent"] += 1
+                    sent_in_file += 1
+                else:
+                    stats["failed"] += 1
+                    return False, sent_in_file
+            if sent_in_file and not self.sink.flush():
+                stats["sent"] -= sent_in_file
                 stats["failed"] += 1
+                self.log.error("sink flush failed on %s", key)
                 return False, sent_in_file
-        if sent_in_file and not self.sink.flush():
-            stats["sent"] -= sent_in_file
-            stats["failed"] += 1
-            self.log.error("sink flush failed on %s", key)
-            return False, sent_in_file
-        return True, sent_in_file
+            return True, sent_in_file
+        finally:
+            if bad_json:
+                self.log.warning("%d bad JSON lines in %s; skipped", bad_json, key)
 
 
 # ---- factory ----------------------------------------------------------------
+
+def _boto_config():
+    from botocore.config import Config as BotoConfig
+    return BotoConfig(
+        retries={"mode": "standard", "max_attempts": 5},
+        connect_timeout=10,
+        read_timeout=70,  # must exceed the SQS long-poll wait (20s)
+    )
+
 
 def _build_sink(sc) -> Sink:
     from sinks.file_sink import FileSink
@@ -140,12 +160,14 @@ def _build_sink(sc) -> Sink:
     from sinks.udp_sink import UdpSink
 
     if sc.type == "udp":
-        return UdpSink(host=sc.host, port=sc.port, max_bytes=sc.max_bytes)
+        max_bytes = sc.max_bytes if sc.max_bytes is not None else 8192
+        return UdpSink(host=sc.host, port=sc.port, max_bytes=max_bytes)
     if sc.type == "tcp":
         return TcpSink(host=sc.host, port=sc.port,
                        timeout_sec=sc.timeout_sec,
                        max_retries=sc.max_retries,
-                       retry_backoff_sec=sc.retry_backoff_sec)
+                       retry_backoff_sec=sc.retry_backoff_sec,
+                       max_bytes=sc.max_bytes or 0)
     if sc.type == "tls":
         tls = sc.tls
         return TlsSink(host=sc.host, port=sc.port,
@@ -153,7 +175,8 @@ def _build_sink(sc) -> Sink:
                        ca_file=tls.ca_file if tls else None,
                        timeout_sec=sc.timeout_sec,
                        max_retries=sc.max_retries,
-                       retry_backoff_sec=sc.retry_backoff_sec)
+                       retry_backoff_sec=sc.retry_backoff_sec,
+                       max_bytes=sc.max_bytes or 0)
     if sc.type == "https":
         return HttpsSink(url=sc.url,
                          batch_size=sc.batch_size,
@@ -168,9 +191,10 @@ def _build_sink(sc) -> Sink:
             rotation_hours=sc.rotation_hours,
             retention_days=sc.retention_days,
             prefix=sc.prefix,
+            fsync=sc.fsync,
         )
     if sc.type == "multi":
-        return MultiSink([_build_sink(sub) for sub in sc.sinks])
+        return MultiSink([_build_sink(sub) for sub in sc.sinks], require=sc.require)
     raise ValueError(f"unknown sink type: {sc.type}")
 
 
@@ -225,12 +249,13 @@ def _build_session(cfg):
 def _build_polling(cfg, session) -> "BuildResult":
     from sources.s3_source import S3Source
 
-    s3_client = session.client("s3")
+    s3_client = session.client("s3", config=_boto_config())
     source = S3Source(
         bucket=cfg.source.bucket,
         fqdn=cfg.source.fqdn,
         org_id=cfg.source.org_id,
         s3_client=s3_client,
+        safety_lag_sec=cfg.source.safety_lag_sec,
     )
 
     store = CheckpointStore(cfg.checkpoint.dir)
@@ -240,8 +265,6 @@ def _build_polling(cfg, session) -> "BuildResult":
     for pc in cfg.pipelines:
         if not pc.enabled:
             continue
-        if store.load(pc.name).last_modified is None:
-            store.save(store.fresh(pc.name, lookback))
 
         mapper = _build_mapper(pc.mapper, pc.log_type)
         filter_fn = _build_filter(pc.filter)
@@ -265,8 +288,8 @@ def _build_sqs(cfg, session) -> "BuildResult":
     from core.sqs_pipeline import SqsPipeline
     from sources.sqs_s3_source import SqsS3Dispatcher
 
-    sqs_client = session.client("sqs")
-    s3_client = session.client("s3")
+    sqs_client = session.client("sqs", config=_boto_config())
+    s3_client = session.client("s3", config=_boto_config())
     sqs_pipelines: list = []
     for pc in cfg.pipelines:
         if not pc.enabled:
@@ -288,6 +311,9 @@ def _build_sqs(cfg, session) -> "BuildResult":
         wait_time_sec=cfg.source.wait_time_sec,
         max_messages_per_receive=cfg.source.max_messages_per_receive,
         max_workers=cfg.source.max_workers,
+        poison_receive_count=cfg.source.poison_receive_count,
+        reconcile_interval_sec=cfg.source.reconcile_interval_sec,
+        reconcile_window_sec=cfg.source.reconcile_window_sec,
     )
     return BuildResult(mode="sqs", sqs_dispatcher=dispatcher,
                        sqs_pipelines=sqs_pipelines)

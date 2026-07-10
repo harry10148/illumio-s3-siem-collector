@@ -34,6 +34,8 @@ source:
   bucket: "illumio-flow-XXXXXXXX-your-bucket"   # 原廠文件提供
   fqdn: "your-pce.illum.io"                              # PCE FQDN，原廠文件提供
   org_id: "123456"                                      # PCE Org ID，純數字
+  # safety_lag_sec: 60          # 只處理 LastModified 早於 now-60s 的物件，
+                                 # 關閉 S3 列表同秒競態的漏檔窗口（0 = 停用）
 
 # ─────────────────────────────────────────────────────────────────────
 # 替代來源模式：SQS 事件驅動（Event-driven）。
@@ -58,6 +60,12 @@ source:
 #   # wait_time_sec: 20
 #   # max_messages_per_receive: 10
 #   # max_workers: 1
+#   # poison_receive_count: 10       # 訊息重複收到 N 次後視為毒訊息：記 ERROR 後刪除（0 = 停用）
+#   #   若在 SQS 隊列上設定 DLQ（RedrivePolicy），其 maxReceiveCount 必須
+#   #   嚴格小於此值（建議 5），否則此防護會先把訊息刪除，DLQ 永遠收不到訊息。
+#   #   詳見 docs/OPERATIONS.md「SQS 模式的 DLQ 與毒訊息」。
+#   # reconcile_interval_sec: 3600   # 每 N 秒掃描 S3，補撿 SQS 從未送達的物件（0 = 停用）
+#   # reconcile_window_sec: 7200     # 對帳掃描回看的時間窗
 #
 # 在 SQS 模式下，pipelines.*.poll_interval_sec 和 max_files_per_tick
 # 會被忽略——dispatcher 是事件驅動的。
@@ -77,7 +85,7 @@ logging:
   file: "collector.log"
   rotate_mb: 50                    # 單檔最大 MB，超過自動 rotate
   keep_files: 7                    # 保留幾份舊檔
-  console: true                    # 是否同時印到終端
+  console: false                   # 是否同時印到終端（systemd 部署建議 false，避免 journal 與檔案雙份）
 
 # ── Pipelines ────────────────────────────────────────────
 # 每個 pipeline 獨立拉取、獨立 checkpoint、獨立排程。
@@ -104,6 +112,7 @@ pipelines:
       timeout_sec: 10
       max_retries: 3               # 失敗重試 3 次
       retry_backoff_sec: [1, 2, 4] # 重試間隔（秒）
+      # max_bytes: 0            # 0 = 不截斷（預設）；設限會把超長事件截成無法解析的 JSON，不建議
 
   # ── [必收] Blocked（pd=2）────────────────────────────
   # 被 Illumio policy 實際 DENY 的流量，資安告警的核心來源
@@ -264,6 +273,10 @@ pipelines:
       # 每行行首加上此字串。空字串 "" 則不加前綴。
       # FortiSIEM Agent 可用 Log Prefix 設定識別此字串。
       prefix: "ILLUMIO_FLOW: "
+      #
+      # ── fsync（預設 false）───────────────────────────
+      # true = 每次 flush 落盤（合規存證用；每檔多一次磁碟同步）
+      # fsync: false
 
   - name: "traffic-local"
     enabled: false
@@ -298,6 +311,7 @@ pipelines:
       flatten: true
     sink:
       type: multi
+      # require: any            # any = 任一子 sink 成功即前進 checkpoint；all = 全部成功才前進
       sinks:
         # 子 sink 1：TLS 轉送到 SIEM（與一般 SIEM-only 設定相同）
         - type: tls

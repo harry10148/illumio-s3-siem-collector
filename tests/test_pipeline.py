@@ -1,6 +1,7 @@
 import gzip
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 
 from core.checkpoint import Checkpoint, CheckpointStore
 from core.pipeline import Pipeline
@@ -143,6 +144,46 @@ def test_invalid_json_line_skipped(tmp_state_dir):
     assert len(sink.sent) == 2
 
 
+def test_bad_json_lines_warned_once_per_file(tmp_state_dir, caplog):
+    body = gzip.compress(b'bad1\nbad2\n{"a":1}\nbad3\n')
+    files = [("k1", _lm("2026-04-20T10:00:00+00:00"), body)]
+    sink = FakeSink()
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource(files), mapper=FakeMapper(), sink=sink,
+        checkpoint_store=CheckpointStore(tmp_state_dir),
+        filter_fn=None, max_files_per_tick=100,
+    )
+    with caplog.at_level(logging.WARNING, logger="p1"):
+        p.tick()
+    warnings = [r for r in caplog.records if "bad JSON" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "3" in warnings[0].getMessage()
+    assert len(sink.sent) == 1
+
+
+def test_bad_json_with_sink_failure_still_warns(tmp_state_dir, caplog):
+    """When a file has bad JSON and sink fails, the aggregated bad-JSON warning must still be emitted."""
+    body = gzip.compress(b'bad1\nbad2\n{"a":1}\n{"a":2}\nbad3\n')
+    files = [("k1", _lm("2026-04-20T10:00:00+00:00"), body)]
+    # Sink fails on the first event ({"a":1})
+    sink = FakeSink(fail_on={json.dumps({"a": 1}).encode("utf-8")})
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource(files), mapper=FakeMapper(), sink=sink,
+        checkpoint_store=CheckpointStore(tmp_state_dir),
+        filter_fn=None, max_files_per_tick=100,
+    )
+    with caplog.at_level(logging.WARNING, logger="p1"):
+        p.tick()
+    warnings = [r for r in caplog.records if "bad JSON" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "2" in warnings[0].getMessage()
+    # Sink failed, so checkpoint should not advance
+    cp = p.checkpoint_store.load("p1")
+    assert cp.last_key is None
+
+
 def test_tick_recovers_from_corrupt_checkpoint(tmp_state_dir):
     store = CheckpointStore(tmp_state_dir)
     # Write a corrupt JSON file at the checkpoint path before tick runs.
@@ -164,6 +205,22 @@ def test_tick_recovers_from_corrupt_checkpoint(tmp_state_dir):
     assert cp.last_modified is not None
     assert cp.last_key is None
     assert cp.processed_files_cumulative == 0
+
+
+def test_tick_initializes_missing_checkpoint_with_lookback(tmp_state_dir):
+    """First tick with no checkpoint file must create one honoring the lookback."""
+    store = CheckpointStore(tmp_state_dir)
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource([]), mapper=FakeMapper(), sink=FakeSink(),
+        checkpoint_store=store, filter_fn=None,
+        max_files_per_tick=100, recovery_lookback_hours=12,
+    )
+    p.tick()
+    cp = store.load("p1")
+    assert cp.last_modified is not None
+    age_h = (datetime.now(timezone.utc) - cp.last_modified).total_seconds() / 3600
+    assert 11.9 < age_h < 12.1
 
 
 def test_flush_failure_blocks_checkpoint(tmp_state_dir):
@@ -284,3 +341,60 @@ pipelines:
     assert result.mode == "polling"
     assert result.polling is not None
     assert len(result.polling) == 1
+
+
+def _factory_cfg_text(tmp_path):
+    return f"""
+aws: {{ region: us-east-1, access_key: x, secret_key: y }}
+source: {{ type: s3, bucket: b, fqdn: pce.example.com, org_id: '1' }}
+checkpoint: {{ dir: {tmp_path}/state, initial_lookback_hours: 24 }}
+logging: {{ dir: {tmp_path}/logs, level: INFO }}
+pipelines:
+  - name: a
+    enabled: true
+    log_type: auditable
+    poll_interval_sec: 60
+    mapper: {{ format: json }}
+    sink: {{ type: file, path: {tmp_path}/x.log }}
+"""
+
+
+def test_factory_survives_corrupt_checkpoint(tmp_path, monkeypatch):
+    """Startup must not crash-loop on a corrupt checkpoint file."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "a.json").write_text("{not valid json", encoding="utf-8")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    result = build_pipelines_from_config(load_config(str(p)))  # must not raise
+    assert result.mode == "polling"
+
+
+def test_factory_does_not_touch_checkpoint_files(tmp_path, monkeypatch):
+    """build must be side-effect free w.r.t. checkpoints (dry-run safety)."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    build_pipelines_from_config(load_config(str(p)))
+    assert list((tmp_path / "state").glob("*.json")) == []
+
+
+def test_boto_clients_use_standard_retries(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "y")
+    p = tmp_path / "cfg.yaml"
+    p.write_text(_factory_cfg_text(tmp_path))
+    from core.config import load_config
+    from core.pipeline import build_pipelines_from_config
+    result = build_pipelines_from_config(load_config(str(p)))
+    s3_client = result.polling[0][0].source.s3
+    assert s3_client.meta.config.retries["mode"] == "standard"
+    assert s3_client.meta.config.read_timeout == 70
+    assert s3_client.meta.config.connect_timeout == 10

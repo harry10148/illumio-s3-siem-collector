@@ -30,6 +30,13 @@ _LOG_TYPE_PATH = {
 }
 
 
+def base_prefix(fqdn: str, org_id: str, log_type: str) -> str:
+    """S3 key prefix for a log_type: {fqdn}/org_id={org_id}/<sub_path>/."""
+    if log_type not in _LOG_TYPE_PATH:
+        raise SourceError(f"unknown log_type: {log_type}")
+    return f"{fqdn}/org_id={org_id}/{_LOG_TYPE_PATH[log_type]}/"
+
+
 def path_to_log_type(key: str, fqdn: str, org_id: str) -> Optional[str]:
     """Reverse-lookup log_type from an S3 object key.
 
@@ -55,32 +62,37 @@ class S3Source(Source):
         org_id: str,
         s3_client=None,
         today: Optional[datetime] = None,
+        max_gunzip_retries: int = 3,
+        safety_lag_sec: int = 0,
     ):
         self.bucket = bucket
         self.fqdn = fqdn
         self.org_id = org_id
         self.s3 = s3_client or boto3.client("s3")
         self._today_override = today
+        self.max_gunzip_retries = max_gunzip_retries
+        self.safety_lag_sec = safety_lag_sec
+        self._gunzip_failures: dict[str, int] = {}
 
     def _today(self) -> datetime:
         return self._today_override or datetime.now(timezone.utc)
 
     def _base_prefix(self, log_type: str) -> str:
-        if log_type not in _LOG_TYPE_PATH:
-            raise SourceError(f"unknown log_type: {log_type}")
-        return f"{self.fqdn}/org_id={self.org_id}/{_LOG_TYPE_PATH[log_type]}/"
+        return base_prefix(self.fqdn, self.org_id, log_type)
 
     def _scan_date_prefixes(self, base: str, checkpoint: Checkpoint) -> List[str]:
         today = self._today()
         lm = checkpoint.last_modified
-        if lm is None or (today - lm) > timedelta(hours=48):
-            start = lm or (today - timedelta(hours=24))
-            days = (today.date() - start.date()).days + 1
-            dates = [(start.date() + timedelta(days=i)) for i in range(max(1, days))]
+        if lm is None:
+            start_date = (today - timedelta(hours=24)).date()
         else:
-            yesterday = today - timedelta(days=1)
-            dates = sorted({yesterday.date(), today.date()})
-        return [f"{base}{d.strftime('%Y%m%d')}_" for d in dates]
+            # Late uploads land in old date prefixes: always rescan from the
+            # checkpoint's calendar date, and never scan fewer than
+            # {yesterday, today}.
+            start_date = min(lm.date(), (today - timedelta(days=1)).date())
+        days = (today.date() - start_date).days
+        return [f"{base}{(start_date + timedelta(days=i)).strftime('%Y%m%d')}_"
+                for i in range(days + 1)]
 
     def iter_new_files(
         self,
@@ -95,12 +107,16 @@ class S3Source(Source):
         scan_prefixes = self._scan_date_prefixes(base, checkpoint)
         log.debug("scan prefixes for %s: %s", log_type, scan_prefixes)
 
+        cutoff = (self._today() - timedelta(seconds=self.safety_lag_sec)
+                  if self.safety_lag_sec else None)
         candidates: list[tuple[datetime, str]] = []
         for prefix in scan_prefixes:
             try:
                 paginator = self.s3.get_paginator("list_objects_v2")
                 for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
                     for obj in page.get("Contents", []) or []:
+                        if cutoff is not None and obj["LastModified"] > cutoff:
+                            continue
                         if self._is_new(obj, checkpoint):
                             item = (obj["LastModified"], obj["Key"])
                             if len(candidates) < max_files_per_tick:
@@ -120,8 +136,18 @@ class S3Source(Source):
             try:
                 body = gzip.decompress(raw)
             except OSError as e:
-                log.error("gunzip failed for %s: %s", key, e)
+                n = self._gunzip_failures.get(key, 0) + 1
+                if n < self.max_gunzip_retries:
+                    self._gunzip_failures[key] = n
+                    raise SourceError(
+                        f"gunzip failed for {key} "
+                        f"(attempt {n}/{self.max_gunzip_retries}): {e}; "
+                        "aborting tick to retry") from e
+                self._gunzip_failures.pop(key, None)
+                log.error("gunzip failed for %s after %d attempts; "
+                          "permanently skipping: %s", key, n, e)
                 continue
+            self._gunzip_failures.pop(key, None)
             yield key, lm, body
 
     @staticmethod

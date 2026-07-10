@@ -1,8 +1,11 @@
 """Fan-out sink: delivers each event to all child sinks.
 
-Returns False only when **every** child sink fails, so a temporary SIEM
-outage does not block local file writes and vice-versa.  Partial failures
-are logged as warnings.
+With require="any" (default): Returns False only when **every** child sink fails,
+so a temporary SIEM outage does not block local file writes and vice-versa.
+Partial failures are logged as warnings.
+
+With require="all": Returns False if **any** child sink fails, so all sinks must
+succeed for checkpoint to advance. Ensures durability across all backends.
 """
 from __future__ import annotations
 
@@ -15,8 +18,12 @@ log = logging.getLogger(__name__)
 
 
 class MultiSink(Sink):
-    def __init__(self, sinks: List[Sink]):
+    def __init__(self, sinks: List[Sink], require: str = "any"):
         self._sinks = sinks
+        self.require = require
+
+    def _combine(self, results: List[bool]) -> bool:
+        return all(results) if self.require == "all" else any(results)
 
     def send(self, wire: bytes) -> bool:
         results = []
@@ -25,7 +32,7 @@ class MultiSink(Sink):
             if not ok:
                 log.warning("%s.send failed", type(s).__name__)
             results.append(ok)
-        return any(results)
+        return self._combine(results)
 
     def flush(self) -> bool:
         results = []
@@ -34,7 +41,7 @@ class MultiSink(Sink):
             if not ok:
                 log.warning("%s.flush failed", type(s).__name__)
             results.append(ok)
-        return any(results)
+        return self._combine(results)
 
     def close(self) -> None:
         for s in self._sinks:

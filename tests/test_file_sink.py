@@ -197,3 +197,79 @@ def test_multi_close_tolerates_exception():
 
     ms = MultiSink([_BrokenSink()])
     ms.close()  # must not raise
+
+
+def test_multi_require_all_fails_on_partial_failure():
+    ms = MultiSink([_OkSink(), _FailSink()], require="all")
+    assert ms.send(b"x") is False
+    assert ms.flush() is False
+
+
+def test_multi_require_all_ok_when_all_ok():
+    ms = MultiSink([_OkSink(), _OkSink()], require="all")
+    assert ms.send(b"x") is True
+
+
+def test_multi_sink_config_require_field():
+    from core.config import PipelineConfig
+    pc = PipelineConfig(**{
+        "name": "dual", "log_type": "pd2", "poll_interval_sec": 60,
+        "mapper": {"format": "syslog_json"},
+        "sink": {"type": "multi", "require": "all", "sinks": [
+            {"type": "tls", "host": "siem.example.com", "port": 6514},
+            {"type": "file", "path": "/var/log/illumio/events.log"},
+        ]},
+    })
+    assert pc.sink.require == "all"
+
+
+def test_constructor_has_no_filesystem_side_effects(tmp_path):
+    """dry-run safety: building the sink must not create dirs or files."""
+    p = tmp_path / "sub" / "events.log"
+    FileSink(str(p), prefix="")
+    assert not p.exists()
+    assert not p.parent.exists()
+
+
+def test_cleanup_deletes_orphaned_plain_logs(tmp_path):
+    """A .log left behind by a failed gzip during rotation must be reaped."""
+    p = tmp_path / "events.log"
+    sink = FileSink(str(p), retention_days=1, prefix="")
+    sink.send(b"x")  # open the active file
+
+    orphan = tmp_path / "events.20200101T000000.log"
+    orphan.touch()
+    old_time = time.time() - 2 * 86400
+    os.utime(orphan, (old_time, old_time))
+
+    sink._cleanup_old()
+    sink.close()
+    assert not orphan.exists()
+    assert p.exists()  # active file untouched
+
+
+def test_flush_fsyncs_when_enabled(tmp_path, monkeypatch):
+    fsynced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (fsynced.append(fd), real_fsync(fd))[1])
+    p = tmp_path / "events.log"
+    sink = FileSink(str(p), prefix="", fsync=True)
+    sink.send(b"data")
+    assert sink.flush() is True
+    sink.close()
+    assert len(fsynced) >= 1
+
+
+def test_send_returns_false_when_lazy_open_fails(tmp_path):
+    """send() must return False when _ensure_open() fails, not raise OSError."""
+    # Create a regular file where the directory should be
+    obstruction = tmp_path / "obstruction"
+    obstruction.touch()
+
+    # Now try to use a path whose parent is this regular file
+    p = obstruction / "events.log"
+    sink = FileSink(str(p), prefix="")
+
+    # send() should catch OSError from mkdir/open and return False
+    result = sink.send(b"test")
+    assert result is False

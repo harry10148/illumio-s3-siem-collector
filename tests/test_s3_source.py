@@ -125,3 +125,75 @@ def test_path_to_log_type_unknown_returns_none():
     assert path_to_log_type("pce.example.com/org_id=123/foo/x", "pce.example.com", "123") is None
     assert path_to_log_type("other/org_id=123/auditable/x", "pce.example.com", "123") is None
     assert path_to_log_type("pce.example.com/org_id=999/auditable/x", "pce.example.com", "123") is None
+
+
+def test_gunzip_failure_retries_then_skips(s3_env):
+    """A corrupt object aborts the tick (retry) until max attempts, then is skipped."""
+    from core.exceptions import SourceError
+    base = f"{FQDN}/org_id={ORG}/auditable/"
+    _put(s3_env, base + "20260420_aaa.jsonl.gz", b"this is not gzip")
+    _put(s3_env, base + "20260420_bbb.jsonl.gz", _gz('{"x":1}'))
+
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 20, 23, 59, 59, tzinfo=timezone.utc),
+                   max_gunzip_retries=3)
+
+    # Attempts 1 and 2: abort the tick so the file is retried next tick.
+    for _ in range(2):
+        with pytest.raises(SourceError):
+            list(src.iter_new_files("auditable", cp))
+
+    # Attempt 3: give up on the corrupt file, later files flow again.
+    results = list(src.iter_new_files("auditable", cp))
+    assert [r[0] for r in results] == [base + "20260420_bbb.jsonl.gz"]
+
+
+def test_safety_lag_excludes_recent_objects(s3_env):
+    """Objects newer than now - safety_lag are deferred to a later tick,
+    closing the same-second listing race."""
+    now = datetime.now(timezone.utc)
+    base = f"{FQDN}/org_id={ORG}/auditable/"
+    _put(s3_env, base + f"{now:%Y%m%d}_recent.jsonl.gz", _gz('{"x":1}'))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    lagged = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                      safety_lag_sec=300)
+    assert list(lagged.iter_new_files("auditable", cp)) == []
+
+    no_lag = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                      safety_lag_sec=0)
+    assert len(list(no_lag.iter_new_files("auditable", cp))) == 1
+
+
+def _dates_of(prefixes):
+    return [p.rsplit("/", 1)[-1] for p in prefixes]
+
+
+def test_scan_prefixes_cover_checkpoint_date_after_outage(s3_env):
+    """A 30h outage spanning 3 calendar days must rescan the checkpoint's date."""
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 2, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2026, 4, 20, 20, 0, tzinfo=timezone.utc))
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260420_", "20260421_", "20260422_"]
+
+
+def test_scan_prefixes_steady_state_is_yesterday_and_today(s3_env):
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2026, 4, 22, 11, 55, tzinfo=timezone.utc))
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260421_", "20260422_"]
+
+
+def test_scan_prefixes_no_checkpoint_covers_last_24h(s3_env):
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 2, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p", last_modified=None)
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260421_", "20260422_"]

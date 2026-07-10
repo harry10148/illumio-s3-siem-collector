@@ -13,6 +13,8 @@ from typing import Callable, Optional
 from mappers.base import Mapper
 from sinks.base import Sink
 
+_PROGRESS_EVERY = 200
+
 
 class SqsPipeline:
     def __init__(
@@ -32,7 +34,8 @@ class SqsPipeline:
         self.last_stats: dict = {"read": 0, "filtered": 0, "sent": 0,
                                   "mapper_err": 0, "failed": 0}
 
-    def process(self, body: bytes) -> bool:
+    def process(self, body: bytes,
+                on_progress: Optional[Callable[[], None]] = None) -> bool:
         """Run JSON-lines body through filter/mapper/sink.
 
         Returns True iff every non-filtered event was sent and the final
@@ -41,16 +44,19 @@ class SqsPipeline:
         """
         stats = {"read": 0, "filtered": 0, "sent": 0, "mapper_err": 0, "failed": 0}
         sent_in_msg = 0
+        bad_json = 0
         try:
             for raw_line in body.splitlines():
                 if not raw_line.strip():
                     continue
                 stats["read"] += 1
+                if on_progress and stats["read"] % _PROGRESS_EVERY == 0:
+                    on_progress()
                 try:
                     ev = json.loads(raw_line)
                 except Exception:
                     stats["mapper_err"] += 1
-                    self.log.warning("bad JSON line; skipping")
+                    bad_json += 1
                     continue
 
                 if self.filter_fn and not self.filter_fn(ev):
@@ -77,6 +83,8 @@ class SqsPipeline:
                 return False
             return True
         finally:
+            if bad_json:
+                self.log.warning("%d bad JSON lines in message; skipped", bad_json)
             self.last_stats = stats
             self.log.info(
                 "process: read=%d sent=%d filtered=%d mapper_err=%d failed=%d",
