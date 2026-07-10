@@ -221,3 +221,40 @@ def test_multi_sink_config_require_field():
         ]},
     })
     assert pc.sink.require == "all"
+
+
+def test_constructor_has_no_filesystem_side_effects(tmp_path):
+    """dry-run safety: building the sink must not create dirs or files."""
+    p = tmp_path / "sub" / "events.log"
+    FileSink(str(p), prefix="")
+    assert not p.exists()
+    assert not p.parent.exists()
+
+
+def test_cleanup_deletes_orphaned_plain_logs(tmp_path):
+    """A .log left behind by a failed gzip during rotation must be reaped."""
+    p = tmp_path / "events.log"
+    sink = FileSink(str(p), retention_days=1, prefix="")
+    sink.send(b"x")  # open the active file
+
+    orphan = tmp_path / "events.20200101T000000.log"
+    orphan.touch()
+    old_time = time.time() - 2 * 86400
+    os.utime(orphan, (old_time, old_time))
+
+    sink._cleanup_old()
+    sink.close()
+    assert not orphan.exists()
+    assert p.exists()  # active file untouched
+
+
+def test_flush_fsyncs_when_enabled(tmp_path, monkeypatch):
+    fsynced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (fsynced.append(fd), real_fsync(fd))[1])
+    p = tmp_path / "events.log"
+    sink = FileSink(str(p), prefix="", fsync=True)
+    sink.send(b"data")
+    assert sink.flush() is True
+    sink.close()
+    assert len(fsynced) >= 1

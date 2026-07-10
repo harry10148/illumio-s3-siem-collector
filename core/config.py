@@ -163,6 +163,11 @@ class FileSinkConfig(BaseModel):
         default="ILLUMIO_FLOW: ",
         description="Prepend this string to every line (FortiSIEM Agent Log Prefix).",
     )
+    fsync: bool = Field(
+        default=False,
+        description="fsync on every flush. Safest for compliance archives; "
+                    "adds one disk sync per processed file.",
+    )
 
 
 class MultiSinkConfig(BaseModel):

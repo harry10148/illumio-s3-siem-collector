@@ -32,15 +32,22 @@ class FileSink(Sink):
         rotation_hours: int = 24,
         retention_days: int = 30,
         prefix: str = "ILLUMIO_FLOW: ",
+        fsync: bool = False,
     ):
         self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._max_bytes = rotation_mb * 1024 * 1024
         self._rotation_secs = rotation_hours * 3600
         self._retention_secs = retention_days * 86400
         self._prefix = prefix.encode("utf-8") if prefix else b""
+        self._fsync = fsync
+        self._fh = None
+        self._size = 0
+        self._file_opened_at = time.time()
 
-        self._fh = self._path.open("ab")
+    def _ensure_open(self) -> None:
+        if self._fh is not None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         if self._path.exists():
             st = self._path.stat()
             self._size = st.st_size
@@ -49,10 +56,12 @@ class FileSink(Sink):
         else:
             self._size = 0
             self._file_opened_at = time.time()
+        self._fh = self._path.open("ab")
 
     # ── public interface ──────────────────────────────────────────────────────
 
     def send(self, wire: bytes) -> bool:
+        self._ensure_open()
         line = self._prefix + wire.rstrip(b"\n") + b"\n"
         try:
             self._fh.write(line)
@@ -65,14 +74,20 @@ class FileSink(Sink):
         return True
 
     def flush(self) -> bool:
+        if self._fh is None:
+            return True
         try:
             self._fh.flush()
+            if self._fsync:
+                os.fsync(self._fh.fileno())
             return True
         except OSError as exc:
             log.error("file flush error: %s", exc)
             return False
 
     def close(self) -> None:
+        if self._fh is None:
+            return
         try:
             self._fh.flush()
             self._fh.close()
@@ -115,10 +130,11 @@ class FileSink(Sink):
     def _cleanup_old(self) -> None:
         cutoff = time.time() - self._retention_secs
         stem = self._path.stem
-        for f in self._path.parent.glob(f"{stem}.*.log.gz"):
-            try:
-                if f.stat().st_mtime < cutoff:
-                    f.unlink()
-                    log.info("deleted expired log: %s", f.name)
-            except OSError:
-                pass
+        for pattern in (f"{stem}.*.log.gz", f"{stem}.*.log"):
+            for f in self._path.parent.glob(pattern):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                        log.info("deleted expired log: %s", f.name)
+                except OSError:
+                    pass

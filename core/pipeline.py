@@ -177,6 +177,7 @@ def _build_sink(sc) -> Sink:
             rotation_hours=sc.rotation_hours,
             retention_days=sc.retention_days,
             prefix=sc.prefix,
+            fsync=sc.fsync,
         )
     if sc.type == "multi":
         return MultiSink([_build_sink(sub) for sub in sc.sinks], require=sc.require)
