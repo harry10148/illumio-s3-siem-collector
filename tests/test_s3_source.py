@@ -166,3 +166,34 @@ def test_safety_lag_excludes_recent_objects(s3_env):
     no_lag = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
                       safety_lag_sec=0)
     assert len(list(no_lag.iter_new_files("auditable", cp))) == 1
+
+
+def _dates_of(prefixes):
+    return [p.rsplit("/", 1)[-1] for p in prefixes]
+
+
+def test_scan_prefixes_cover_checkpoint_date_after_outage(s3_env):
+    """A 30h outage spanning 3 calendar days must rescan the checkpoint's date."""
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 2, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2026, 4, 20, 20, 0, tzinfo=timezone.utc))
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260420_", "20260421_", "20260422_"]
+
+
+def test_scan_prefixes_steady_state_is_yesterday_and_today(s3_env):
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2026, 4, 22, 11, 55, tzinfo=timezone.utc))
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260421_", "20260422_"]
+
+
+def test_scan_prefixes_no_checkpoint_covers_last_24h(s3_env):
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 22, 2, 0, tzinfo=timezone.utc))
+    cp = Checkpoint(pipeline="p", last_modified=None)
+    prefixes = src._scan_date_prefixes(f"{FQDN}/org_id={ORG}/auditable/", cp)
+    assert _dates_of(prefixes) == ["20260421_", "20260422_"]

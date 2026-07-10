@@ -78,14 +78,16 @@ class S3Source(Source):
     def _scan_date_prefixes(self, base: str, checkpoint: Checkpoint) -> List[str]:
         today = self._today()
         lm = checkpoint.last_modified
-        if lm is None or (today - lm) > timedelta(hours=48):
-            start = lm or (today - timedelta(hours=24))
-            days = (today.date() - start.date()).days + 1
-            dates = [(start.date() + timedelta(days=i)) for i in range(max(1, days))]
+        if lm is None:
+            start_date = (today - timedelta(hours=24)).date()
         else:
-            yesterday = today - timedelta(days=1)
-            dates = sorted({yesterday.date(), today.date()})
-        return [f"{base}{d.strftime('%Y%m%d')}_" for d in dates]
+            # Late uploads land in old date prefixes: always rescan from the
+            # checkpoint's calendar date, and never scan fewer than
+            # {yesterday, today}.
+            start_date = min(lm.date(), (today - timedelta(days=1)).date())
+        days = (today.date() - start_date).days
+        return [f"{base}{(start_date + timedelta(days=i)).strftime('%Y%m%d')}_"
+                for i in range(days + 1)]
 
     def iter_new_files(
         self,
