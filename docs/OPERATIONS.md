@@ -477,8 +477,12 @@ Symptom: messages keep redelivering forever.
 1. Check `s3.get_object` errors in collector.log — likely permission,
    region, or bucket-name mismatch.
 2. Check sink.send / flush errors — the SIEM endpoint may be down.
-3. Configure a DLQ on the queue with a sane `maxReceiveCount`
-   (e.g. 10) so truly poison messages move out of the main queue.
+3. Configure a DLQ on the queue with a `maxReceiveCount` **strictly less
+   than** the collector's `poison_receive_count` (default 10; recommend
+   `maxReceiveCount: 5`). If `maxReceiveCount` is >= `poison_receive_count`,
+   the client-side poison guard deletes the message on its Nth receive
+   before SQS ever redrives it to the DLQ, so the DLQ never receives
+   anything. See "SQS 模式的 DLQ 與毒訊息" below for details.
 
 Visibility timeout tuning:
 - Default `visibility_timeout_sec=60` is enough for typical objects
@@ -510,8 +514,19 @@ SIEM 端如需去重，可用事件內的 `href` 或（syslog 格式）整行內
 
 - 強烈建議在 SQS 隊列上設定 RedrivePolicy（DLQ）。collector 啟動時會檢查，
   未設定會記 WARNING。
+- **`maxReceiveCount` 必須嚴格小於 `poison_receive_count`**（預設 10，
+  建議設 `maxReceiveCount: 5`）。collector 端的毒訊息防護會在訊息第
+  `poison_receive_count` 次收到時就刪除訊息；若 `maxReceiveCount` 大於等於
+  `poison_receive_count`，client 端會先把訊息刪掉，SQS 永遠不會把它轉進
+  DLQ，DLQ 形同虛設。
 - 未設 DLQ 時由 `poison_receive_count`（預設 10）兜底：同一訊息重複收到
   N 次後記 ERROR（含 body 開頭 500 字元）並刪除。請對 ERROR log 設告警。
+- **注意**：receive count 在下游 SIEM 長時間中斷時也會累積——每次
+  visibility timeout 到期後的重新投遞都會讓 `ApproximateReceiveCount` +1，
+  即使訊息本身完全正常。長時間的 sink 中斷可能把大量合法訊息推向
+  `poison_receive_count` 門檻並被誤刪。務必確保 `maxReceiveCount` 與
+  `poison_receive_count` 的間距（見上方）足以撐過預期的最長中斷時間，
+  否則應優先修復 sink 中斷而非單純調高門檻。
 - 監控 DLQ 深度（CloudWatch `ApproximateNumberOfMessagesVisible`）。
 
 ### 對帳掃描（reconcile）
