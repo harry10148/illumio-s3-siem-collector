@@ -55,12 +55,15 @@ class S3Source(Source):
         org_id: str,
         s3_client=None,
         today: Optional[datetime] = None,
+        max_gunzip_retries: int = 3,
     ):
         self.bucket = bucket
         self.fqdn = fqdn
         self.org_id = org_id
         self.s3 = s3_client or boto3.client("s3")
         self._today_override = today
+        self.max_gunzip_retries = max_gunzip_retries
+        self._gunzip_failures: dict[str, int] = {}
 
     def _today(self) -> datetime:
         return self._today_override or datetime.now(timezone.utc)
@@ -120,8 +123,18 @@ class S3Source(Source):
             try:
                 body = gzip.decompress(raw)
             except OSError as e:
-                log.error("gunzip failed for %s: %s", key, e)
+                n = self._gunzip_failures.get(key, 0) + 1
+                if n < self.max_gunzip_retries:
+                    self._gunzip_failures[key] = n
+                    raise SourceError(
+                        f"gunzip failed for {key} "
+                        f"(attempt {n}/{self.max_gunzip_retries}): {e}; "
+                        "aborting tick to retry") from e
+                self._gunzip_failures.pop(key, None)
+                log.error("gunzip failed for %s after %d attempts; "
+                          "permanently skipping: %s", key, n, e)
                 continue
+            self._gunzip_failures.pop(key, None)
             yield key, lm, body
 
     @staticmethod

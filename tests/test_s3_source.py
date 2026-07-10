@@ -125,3 +125,26 @@ def test_path_to_log_type_unknown_returns_none():
     assert path_to_log_type("pce.example.com/org_id=123/foo/x", "pce.example.com", "123") is None
     assert path_to_log_type("other/org_id=123/auditable/x", "pce.example.com", "123") is None
     assert path_to_log_type("pce.example.com/org_id=999/auditable/x", "pce.example.com", "123") is None
+
+
+def test_gunzip_failure_retries_then_skips(s3_env):
+    """A corrupt object aborts the tick (retry) until max attempts, then is skipped."""
+    from core.exceptions import SourceError
+    base = f"{FQDN}/org_id={ORG}/auditable/"
+    _put(s3_env, base + "20260420_aaa.jsonl.gz", b"this is not gzip")
+    _put(s3_env, base + "20260420_bbb.jsonl.gz", _gz('{"x":1}'))
+
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    src = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                   today=datetime(2026, 4, 20, 23, 59, 59, tzinfo=timezone.utc),
+                   max_gunzip_retries=3)
+
+    # Attempts 1 and 2: abort the tick so the file is retried next tick.
+    for _ in range(2):
+        with pytest.raises(SourceError):
+            list(src.iter_new_files("auditable", cp))
+
+    # Attempt 3: give up on the corrupt file, later files flow again.
+    results = list(src.iter_new_files("auditable", cp))
+    assert [r[0] for r in results] == [base + "20260420_bbb.jsonl.gz"]
