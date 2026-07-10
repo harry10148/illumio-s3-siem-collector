@@ -486,3 +486,51 @@ Visibility timeout tuning:
 - For larger objects or slow SIEM endpoints, raise `source.visibility_timeout_sec`
   (e.g. 300). The dispatcher auto-extends mid-process, but a higher
   floor avoids extension churn.
+
+## 可靠性語意（Reliability Semantics）
+
+### 傳遞保證
+
+本 collector 提供 **at-least-once** 傳遞：故障重試路徑（S3 輪詢 checkpoint 重放、
+SQS visibility 重新投遞、對帳掃描）都可能造成事件重複送達 SIEM，但不會靜默遺失。
+SIEM 端如需去重，可用事件內的 `href` 或（syslog 格式）整行內容雜湊。
+
+已知的殘餘遺失窗口（無法在無應答協定上完全消除）：
+
+- **UDP sink**：fire-and-forget，網路丟包即遺失。只建議在同機房低丟包環境使用。
+- **TCP/TLS sink**：`send` 成功只代表資料進了本機 kernel buffer。對端當機時
+  in-flight 資料會遺失。collector 已用 keepalive（30s/10s/3 次）與
+  TCP_USER_TIMEOUT（60s）把偵測窗口壓到約一分鐘，並在每次送出前偵測對端
+  FIN；如果可靠性要求更高，請改用 HTTPS sink（有應答、有重試）。
+- **multi sink 的 require: any（預設）**：任一子 sink 成功即前進 checkpoint，
+  失敗子 sink 在該窗口的事件不會重放。若「SIEM 與本機備份都必須收到」，
+  設 `require: all`（代價：任一目的地斷線會暫停整條 pipeline 的進度）。
+
+### SQS 模式的 DLQ 與毒訊息
+
+- 強烈建議在 SQS 隊列上設定 RedrivePolicy（DLQ）。collector 啟動時會檢查，
+  未設定會記 WARNING。
+- 未設 DLQ 時由 `poison_receive_count`（預設 10）兜底：同一訊息重複收到
+  N 次後記 ERROR（含 body 開頭 500 字元）並刪除。請對 ERROR log 設告警。
+- 監控 DLQ 深度（CloudWatch `ApproximateNumberOfMessagesVisible`）。
+
+### 對帳掃描（reconcile）
+
+SQS 模式下每 `reconcile_interval_sec`（預設 3600 秒）列出近
+`reconcile_window_sec`（預設 7200 秒）內的 S3 物件，補處理 SQS 從未送達的
+物件（SNS 投遞失敗的保險）。只考慮本次啟動之後建立的物件，重啟不會重複轉發。
+每次補撿都會記 WARNING `reconcile: ... never arrived via SQS`——頻繁出現代表
+SNS→SQS 訂閱有問題，需檢查。
+
+### 健康監控
+
+- polling 模式：每個 tick 記一行 INFO 統計（`tick: files=... sent=...`）。
+- SQS 模式：每 5 分鐘記一行 `heartbeat: batches=N messages=N`。
+- 監控建議：對「超過 15 分鐘沒有任何 tick/heartbeat 行」告警（服務卡死），
+  對「sent 長期為 0 但 S3 有新物件」告警（靜默故障）。
+
+### 吞吐上限
+
+SQS 模式 dispatcher 為單執行緒（`max_workers` 目前僅支援 1）：一種 log_type
+的慢 sink 會阻塞其他 log_type 的處理。單一 pipeline 的吞吐瓶頸通常在 sink
+往返延遲。
