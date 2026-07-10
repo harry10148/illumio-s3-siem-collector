@@ -138,3 +138,9 @@ pipelines:
     import pytest
     with pytest.raises(Exception):
         load_config(str(p))
+
+
+def test_sqs_source_poison_receive_count_default():
+    from core.config import SqsS3SourceConfig
+    cfg = SqsS3SourceConfig(queue_url="https://q", bucket="b", fqdn="f", org_id="1")
+    assert cfg.poison_receive_count == 10

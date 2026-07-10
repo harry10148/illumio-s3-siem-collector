@@ -56,6 +56,11 @@ class SqsS3SourceConfig(BaseModel):
     wait_time_sec: int = 20
     max_messages_per_receive: int = 10
     max_workers: int = 1
+    poison_receive_count: int = Field(
+        default=10, ge=0,
+        description="Delete a message after this many receives (poison guard "
+                    "when the queue has no DLQ). 0 disables.",
+    )
 
 
 # Discriminated union; Pydantic routes on the literal ``type`` field.

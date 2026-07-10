@@ -87,6 +87,7 @@ class SqsS3Dispatcher:
         wait_time_sec: int = 20,
         max_messages_per_receive: int = 10,
         max_workers: int = 1,
+        poison_receive_count: int = 10,
     ):
         self.sqs = sqs_client
         self.s3 = s3_client
@@ -98,6 +99,7 @@ class SqsS3Dispatcher:
         self.visibility_extension_sec = visibility_extension_sec
         self.wait_time_sec = wait_time_sec
         self.max_messages_per_receive = max_messages_per_receive
+        self.poison_receive_count = poison_receive_count
         if max_workers != 1:
             log.warning("max_workers=%d requested, but only 1 is supported "
                         "in this version; falling back to 1", max_workers)
@@ -111,6 +113,7 @@ class SqsS3Dispatcher:
             MaxNumberOfMessages=self.max_messages_per_receive,
             WaitTimeSeconds=self.wait_time_sec,
             VisibilityTimeout=self.visibility_timeout_sec,
+            AttributeNames=["ApproximateReceiveCount"],
         )
         received_at = time.monotonic()
         messages = resp.get("Messages", []) or []
@@ -121,6 +124,17 @@ class SqsS3Dispatcher:
     def _handle_message(self, msg: dict, received_at: Optional[float] = None) -> None:
         body = msg.get("Body", "")
         receipt = msg["ReceiptHandle"]
+        attrs = msg.get("Attributes") or {}
+        try:
+            receive_count = int(attrs.get("ApproximateReceiveCount", "1"))
+        except ValueError:
+            receive_count = 1
+        if self.poison_receive_count and receive_count >= self.poison_receive_count:
+            log.error("poison message: received %d times (threshold %d); "
+                      "deleting. body starts with: %.500r",
+                      receive_count, self.poison_receive_count, body)
+            self._delete(receipt)
+            return
         # The visibility clock started when the batch was received, not when
         # this message's turn came up in the serial loop.
         last_extend_at = received_at if received_at is not None else time.monotonic()
@@ -199,8 +213,21 @@ class SqsS3Dispatcher:
         except Exception as e:  # noqa: BLE001
             log.error("delete_message failed: %s", e)
 
+    def _warn_if_no_dlq(self) -> None:
+        try:
+            resp = self.sqs.get_queue_attributes(
+                QueueUrl=self.queue_url, AttributeNames=["RedrivePolicy"])
+            if "RedrivePolicy" not in (resp.get("Attributes") or {}):
+                log.warning(
+                    "SQS queue has no RedrivePolicy (DLQ). Poison messages "
+                    "will retry until poison_receive_count=%d, then be "
+                    "deleted and logged.", self.poison_receive_count)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not inspect queue RedrivePolicy: %s", e)
+
     def run_forever(self) -> None:
         log.info("SQS dispatcher starting, queue=...%s", self.queue_url[-32:])
+        self._warn_if_no_dlq()
         while not self._stop_event.is_set():
             try:
                 self.consume_one_batch()

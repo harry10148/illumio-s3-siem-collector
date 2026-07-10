@@ -87,6 +87,7 @@ def test_extract_refs_url_decodes_keys():
 
 
 import gzip
+import logging
 import time
 
 import boto3
@@ -471,3 +472,41 @@ def test_dispatcher_passes_on_progress_to_pipeline(aws_env):
                        max_messages_per_receive=10)
     d.consume_one_batch()
     assert callable(seen.get("on_progress"))
+
+
+@mock_aws
+def test_poison_message_deleted_after_receive_count_threshold(aws_env):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sqs.send_message(QueueUrl=qurl, MessageBody="not json — poison")
+
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10,
+                       visibility_timeout_sec=1,
+                       poison_receive_count=2)
+    d.consume_one_batch()          # receive #1: kept (malformed, below threshold)
+    time.sleep(1.5)
+    d.consume_one_batch()          # receive #2: hits threshold -> deleted
+    time.sleep(1.5)
+    msgs = sqs.receive_message(QueueUrl=qurl, WaitTimeSeconds=0,
+                               VisibilityTimeout=1).get("Messages", [])
+    assert msgs == []
+
+
+@mock_aws
+def test_warns_when_queue_has_no_dlq(aws_env, caplog):
+    from sources.sqs_s3_source import SqsS3Dispatcher
+    s3, sqs, qurl, bucket = _fixture_setup(aws_env)
+    sink = CapturingSink()
+    pipeline = _make_sqs_pipeline("audit", "auditable", sink)
+    d = SqsS3Dispatcher(sqs_client=sqs, s3_client=s3, queue_url=qurl,
+                       bucket="test-bucket", fqdn="pce.example.com", org_id="1",
+                       pipelines=[pipeline], wait_time_sec=0,
+                       max_messages_per_receive=10)
+    with caplog.at_level(logging.WARNING):
+        d._warn_if_no_dlq()
+    assert any("RedrivePolicy" in r.getMessage() for r in caplog.records)

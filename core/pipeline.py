@@ -293,6 +293,7 @@ def _build_sqs(cfg, session) -> "BuildResult":
         wait_time_sec=cfg.source.wait_time_sec,
         max_messages_per_receive=cfg.source.max_messages_per_receive,
         max_workers=cfg.source.max_workers,
+        poison_receive_count=cfg.source.poison_receive_count,
     )
     return BuildResult(mode="sqs", sqs_dispatcher=dispatcher,
                        sqs_pipelines=sqs_pipelines)
