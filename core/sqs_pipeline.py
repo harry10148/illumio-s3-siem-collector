@@ -44,6 +44,7 @@ class SqsPipeline:
         """
         stats = {"read": 0, "filtered": 0, "sent": 0, "mapper_err": 0, "failed": 0}
         sent_in_msg = 0
+        bad_json = 0
         try:
             for raw_line in body.splitlines():
                 if not raw_line.strip():
@@ -55,7 +56,7 @@ class SqsPipeline:
                     ev = json.loads(raw_line)
                 except Exception:
                     stats["mapper_err"] += 1
-                    self.log.warning("bad JSON line; skipping")
+                    bad_json += 1
                     continue
 
                 if self.filter_fn and not self.filter_fn(ev):
@@ -75,6 +76,8 @@ class SqsPipeline:
                 else:
                     stats["failed"] += 1
                     return False
+            if bad_json:
+                self.log.warning("%d bad JSON lines in message; skipped", bad_json)
             if sent_in_msg and not self.sink.flush():
                 stats["sent"] -= sent_in_msg
                 stats["failed"] += 1

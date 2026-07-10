@@ -95,6 +95,7 @@ class Pipeline:
 
     def _process_file(self, key: str, body: bytes, stats: dict) -> tuple[bool, int]:
         sent_in_file = 0
+        bad_json = 0
         try:
             body = gzip.decompress(body)
         except Exception:
@@ -107,7 +108,7 @@ class Pipeline:
                 ev = json.loads(raw_line)
             except Exception:
                 stats["mapper_err"] += 1
-                self.log.warning("bad JSON line in %s; skipping", key)
+                bad_json += 1
                 continue
 
             if self.filter_fn and not self.filter_fn(ev):
@@ -127,6 +128,8 @@ class Pipeline:
             else:
                 stats["failed"] += 1
                 return False, sent_in_file
+        if bad_json:
+            self.log.warning("%d bad JSON lines in %s; skipped", bad_json, key)
         if sent_in_file and not self.sink.flush():
             stats["sent"] -= sent_in_file
             stats["failed"] += 1

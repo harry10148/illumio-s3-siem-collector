@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 from datetime import datetime, timezone
 
 from core.checkpoint import Checkpoint, CheckpointStore
@@ -141,6 +142,24 @@ def test_invalid_json_line_skipped(tmp_state_dir):
     )
     p.tick()
     assert len(sink.sent) == 2
+
+
+def test_bad_json_lines_warned_once_per_file(tmp_state_dir, caplog):
+    body = gzip.compress(b'bad1\nbad2\n{"a":1}\nbad3\n')
+    files = [("k1", _lm("2026-04-20T10:00:00+00:00"), body)]
+    sink = FakeSink()
+    p = Pipeline(
+        name="p1", log_type="auditable",
+        source=FakeSource(files), mapper=FakeMapper(), sink=sink,
+        checkpoint_store=CheckpointStore(tmp_state_dir),
+        filter_fn=None, max_files_per_tick=100,
+    )
+    with caplog.at_level(logging.WARNING, logger="p1"):
+        p.tick()
+    warnings = [r for r in caplog.records if "bad JSON" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "3" in warnings[0].getMessage()
+    assert len(sink.sent) == 1
 
 
 def test_tick_recovers_from_corrupt_checkpoint(tmp_state_dir):
