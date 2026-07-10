@@ -148,3 +148,21 @@ def test_gunzip_failure_retries_then_skips(s3_env):
     # Attempt 3: give up on the corrupt file, later files flow again.
     results = list(src.iter_new_files("auditable", cp))
     assert [r[0] for r in results] == [base + "20260420_bbb.jsonl.gz"]
+
+
+def test_safety_lag_excludes_recent_objects(s3_env):
+    """Objects newer than now - safety_lag are deferred to a later tick,
+    closing the same-second listing race."""
+    now = datetime.now(timezone.utc)
+    base = f"{FQDN}/org_id={ORG}/auditable/"
+    _put(s3_env, base + f"{now:%Y%m%d}_recent.jsonl.gz", _gz('{"x":1}'))
+    cp = Checkpoint(pipeline="p",
+                    last_modified=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    lagged = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                      safety_lag_sec=300)
+    assert list(lagged.iter_new_files("auditable", cp)) == []
+
+    no_lag = S3Source(bucket=BUCKET, fqdn=FQDN, org_id=ORG, s3_client=s3_env,
+                      safety_lag_sec=0)
+    assert len(list(no_lag.iter_new_files("auditable", cp))) == 1

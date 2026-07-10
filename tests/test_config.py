@@ -48,6 +48,12 @@ def test_log_type_must_be_known():
         PipelineConfig(**minimal_pipeline_dict(log_type="unknown"))
 
 
+def test_s3_source_safety_lag_default():
+    from core.config import S3SourceConfig
+    cfg = S3SourceConfig(bucket="b", fqdn="f", org_id="1")
+    assert cfg.safety_lag_sec == 60
+
+
 def test_duplicate_pipeline_names_rejected():
     cfg = {
         "aws": {"region": "ap-northeast-1"},

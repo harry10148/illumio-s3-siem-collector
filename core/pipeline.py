@@ -237,6 +237,7 @@ def _build_polling(cfg, session) -> "BuildResult":
         fqdn=cfg.source.fqdn,
         org_id=cfg.source.org_id,
         s3_client=s3_client,
+        safety_lag_sec=cfg.source.safety_lag_sec,
     )
 
     store = CheckpointStore(cfg.checkpoint.dir)

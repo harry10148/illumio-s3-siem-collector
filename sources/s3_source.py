@@ -56,6 +56,7 @@ class S3Source(Source):
         s3_client=None,
         today: Optional[datetime] = None,
         max_gunzip_retries: int = 3,
+        safety_lag_sec: int = 0,
     ):
         self.bucket = bucket
         self.fqdn = fqdn
@@ -63,6 +64,7 @@ class S3Source(Source):
         self.s3 = s3_client or boto3.client("s3")
         self._today_override = today
         self.max_gunzip_retries = max_gunzip_retries
+        self.safety_lag_sec = safety_lag_sec
         self._gunzip_failures: dict[str, int] = {}
 
     def _today(self) -> datetime:
@@ -98,12 +100,16 @@ class S3Source(Source):
         scan_prefixes = self._scan_date_prefixes(base, checkpoint)
         log.debug("scan prefixes for %s: %s", log_type, scan_prefixes)
 
+        cutoff = (self._today() - timedelta(seconds=self.safety_lag_sec)
+                  if self.safety_lag_sec else None)
         candidates: list[tuple[datetime, str]] = []
         for prefix in scan_prefixes:
             try:
                 paginator = self.s3.get_paginator("list_objects_v2")
                 for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
                     for obj in page.get("Contents", []) or []:
+                        if cutoff is not None and obj["LastModified"] > cutoff:
+                            continue
                         if self._is_new(obj, checkpoint):
                             item = (obj["LastModified"], obj["Key"])
                             if len(candidates) < max_files_per_tick:

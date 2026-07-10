@@ -38,6 +38,11 @@ class S3SourceConfig(BaseModel):
     bucket: str
     fqdn: str
     org_id: str
+    safety_lag_sec: int = Field(
+        default=60, ge=0,
+        description="Only process objects older than now - lag; closes the "
+                    "same-second S3 listing race. 0 disables.",
+    )
 
 
 class SqsS3SourceConfig(BaseModel):
