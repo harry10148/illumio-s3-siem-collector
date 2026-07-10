@@ -81,7 +81,11 @@ def main(argv=None) -> int:
     setup_logging(cfg.logging)
     banner(cfg)
 
-    result = build_pipelines_from_config(cfg)
+    try:
+        result = build_pipelines_from_config(cfg)
+    except ConfigError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        return 2
 
     if result.mode == "polling":
         pipelines = result.polling
