@@ -808,8 +808,6 @@ Import parsers from `siem_parser/`:
                  checkpoint (atomic JSON)
 ```
 
-Full design spec: `docs/superpowers/specs/2026-04-20-illumio-s3-siem-collector-design.md`
-
 ---
 
 ## License
